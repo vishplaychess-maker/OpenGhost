@@ -79,6 +79,8 @@ window.Glyphs = {
  // one unit long, so it can be drawn in; the pencil has a group of its own and turns about its tip when it writes.
  notes: '<svg class="glyph glyph-notes" viewBox="30 30 60 60" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M58 42H47a9 9 0 0 0-9 9v22a9 9 0 0 0 9 9h22a9 9 0 0 0 9-9V62"/><g class="notes-pen"><path pathLength="1" d="M53 67l2.6-10.4 21.9-21.9a5.1 5.1 0 0 1 7.2 0l.6.6a5.1 5.1 0 0 1 0 7.2L63.4 64.4z"/><path pathLength="1" d="M73.5 38.7l7.8 7.8"/></g></svg>',
  terminal: svg('<rect x="36" y="40" width="48" height="40" rx="8"/><path d="m47 53 7 7-7 7M61 67h11"/>'),
+ // The whole screen, for the steps that move the real mouse and keyboard.
+ screen: thin('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M9 20h6M12 16v4"/>'),
  // A fork of a chat: a line that branches off another, a ring at each end.
  fork: svg('<circle cx="46" cy="39" r="5"/><circle cx="46" cy="81" r="5"/><circle cx="74" cy="46" r="5"/><path d="M46 44v32"/><path d="M74 51c0 13-28 9-28 22"/>', 'glyph-fork'),
  copy: svg('<rect x="49" y="47" width="32" height="36" rx="6"/><path d="M71 47v-5a5 5 0 0 0-5-5H44a5 5 0 0 0-5 5v26a5 5 0 0 0 5 5h5"/>'),

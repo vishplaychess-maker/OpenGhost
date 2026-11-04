@@ -426,9 +426,11 @@ async function install(url, name = '') {
  return ready.token ? commit(ready.token) : ready;
 }
 
+// host: { fromApp(event), chats() — where the chats without a project folder are kept, which is a setting and so is
+// asked for each time, changed() }.
 function setup({ fromApp, chats, changed }) {
- ipcMain.handle('skills:list', (event, cwd) => fromApp(event) ? list(cwd, chats).then(items => items.map(({ file, ...item }) => item)) : []);
- ipcMain.handle('skills:read', (event, name, cwd) => fromApp(event) ? read(String(name || ''), cwd, chats) : null);
+ ipcMain.handle('skills:list', (event, cwd) => fromApp(event) ? list(cwd, chats()).then(items => items.map(({ file, ...item }) => item)) : []);
+ ipcMain.handle('skills:read', (event, name, cwd) => fromApp(event) ? read(String(name || ''), cwd, chats()) : null);
  ipcMain.handle('skills:prepare', (event, url, name) => fromApp(event) ? prepare(url, name) : { error: 'Not allowed' });
  ipcMain.handle('skills:commit', async (event, token) => {
   if (!fromApp(event)) return { error: 'Not allowed' };

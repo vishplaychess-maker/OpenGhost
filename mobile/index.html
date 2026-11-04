@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenGhost on your phone</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+ <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M10.5 5.5h3"/></svg></span>
+ <div class="who">
+  <span class="name">OpenGhost</span>
+  <span class="state" id="state">Not paired</span>
+ </div>
+ <button type="button" class="ghost" id="screen" hidden>Screen</button>
+</header>
+
+<main class="talk" id="talk">
+ <p class="hint" id="hint">Scan the QR code on OpenGhost with this phone's camera to pair with it.</p>
+ <div class="rows" id="rows"></div>
+</main>
+
+<p class="notice" id="notice" hidden></p>
+
+<form class="send" id="send" hidden>
+ <input id="text" type="text" autocomplete="off" enterkeyhint="send" placeholder="Write to OpenGhost">
+ <button type="submit" id="go" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg></button>
+</form>
+
+<div class="pair" id="pair" hidden>
+ <p class="pair-words">OpenGhost is asking you to allow this phone at the desktop. Nothing you write goes anywhere until you say yes there.</p>
+ <button type="button" class="solid" id="again">Try again</button>
+</div>
+
+<p class="foot"><button type="button" class="quiet" id="forget" hidden>Forget this phone</button></p>
+
+<script src="app.js"></script>
+</body>
+</html>

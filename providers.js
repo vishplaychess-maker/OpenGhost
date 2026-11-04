@@ -9,7 +9,7 @@ bridge?.onEvent(data => listeners.get(data.id)?.(data));
 
 // The least window a model needs to hold the agent's instructions and tools (about 12,400 tokens) and still answer.
 const NEED = 16000;
-const NAMES = { deepseek: 'DeepSeek', openai: 'OpenAI', chatgpt: 'ChatGPT', anthropic: 'Anthropic', openrouter: 'OpenRouter', local: 'Local', custom: 'Custom API' };
+const NAMES = { deepseek: 'DeepSeek', openai: 'OpenAI', chatgpt: 'ChatGPT', grok: 'Grok', anthropic: 'Anthropic', openrouter: 'OpenRouter', nvidia: 'NVIDIA', gemini: 'Gemini', venice: 'Venice', iteracompute: 'IteraCompute', zro: 'Zro', infron: 'Infron', tokenharbor: 'Token Harbor', yeta: 'Yeta', local: 'Local', custom: 'Custom API' };
 
 class ProviderError extends Error {
  constructor(message, status = 0, code = '') {
@@ -28,7 +28,7 @@ function explain(provider, { status = 0, code = '', message = '' }) {
  // A service at the user's own address: the same, but a key it does not take is said as with any other provider.
  if (provider === 'custom' && status !== 401) return code === 'network' ? I18n.t('error.custom') : message || I18n.t('error.statusOf', { provider: name, status });
  if (code === 'network') return I18n.t('error.connect', { provider: name });
- if (status === 401) return I18n.t(provider === 'chatgpt' ? 'error.signin' : 'error.key', { provider: name });
+ if (status === 401) return I18n.t(provider === 'chatgpt' ? 'error.signin' : provider === 'grok' ? 'error.signinGrok' : 'error.key', { provider: name });
  if (status === 402 || code === 'insufficient_quota' || code === 'billing_error') return I18n.t('error.quota', { provider: name });
  if (status === 429) return I18n.t('error.rate', { provider: name });
  if (status >= 500) return I18n.t('error.server', { provider: name });
@@ -160,7 +160,7 @@ function sideComplete(config, { messages, signal, maxTokens, ...live }) {
  const effort = efforts.includes('none') ? 'none' : efforts[0] || 'low';
  // A model that always thinks spends its room on thinking first, so it gets room for both. So does a service's model:
  // its "none" is only offered, and one that turns it down is asked again with nothing said and thinks as it likes.
- const room = config.provider === 'anthropic' || config.provider === 'custom' || !efforts.includes('none') ? Math.max(maxTokens, 2048) : maxTokens;
+ const room = config.provider === 'anthropic' || config.provider === 'custom' || config.provider === 'nvidia' || !efforts.includes('none') ? Math.max(maxTokens, 2048) : maxTokens;
  return viaMain({ ...config, effort }, { messages, signal, maxTokens: room, once: true, ...live });
 }
 

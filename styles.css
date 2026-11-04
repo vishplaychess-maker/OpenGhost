@@ -2442,7 +2442,8 @@ ghost-thinking {
 }
 
 .approval.is-delete,
-.approval.is-system {
+.approval.is-system,
+.approval.is-input {
   --tone: var(--danger-rgb);
 }
 
@@ -3987,6 +3988,10 @@ button.thread-fork-name:focus-visible {
 .t-yellow { --tone: 255, 212, 96; }
 .t-orange { --tone: 255, 162, 98; }
 .t-green { --tone: 128, 218, 134; }
+.t-steel { --tone: 168, 178, 200; }
+.t-lime { --tone: 178, 226, 96; }
+.t-gemini { --tone: 130, 158, 255; }
+.t-venice { --tone: 90, 214, 176; }
 
 /* On white the same tones go deeper, so text in them stays readable and fills keep their weight. */
 [data-theme="light"] .markdown { --tone: 112, 112, 112; }
@@ -3997,6 +4002,10 @@ button.thread-fork-name:focus-visible {
 [data-theme="light"] .t-yellow { --tone: 222, 156, 0; }
 [data-theme="light"] .t-orange { --tone: 230, 106, 20; }
 [data-theme="light"] .t-green { --tone: 30, 150, 70; }
+[data-theme="light"] .t-steel { --tone: 92, 104, 132; }
+[data-theme="light"] .t-lime { --tone: 92, 148, 10; }
+[data-theme="light"] .t-gemini { --tone: 60, 88, 220; }
+[data-theme="light"] .t-venice { --tone: 0, 138, 106; }
 
 .md-w {
   position: relative;
@@ -10313,6 +10322,56 @@ h6.md-h {
   user-select: none;
 }
 
+/* The row over the models: the look that keeps only what costs nothing. It is not one of the rows, so the drum leaves
+   it flat and the arrows do not stop on it. The switch is the app's own (.memory-switch). */
+.model-filter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 2px 48px 12px 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.model-filter-label {
+  color: rgba(var(--fg-rgb), 0.5);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  letter-spacing: 0.14em;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.model-filter-switch {
+  transform-origin: 100% 50%;
+}
+
+/* The word that a model costs nothing, set beside its sizes. It comes from what the provider says of the model, not
+   from the filter, so it stands in the list whether or not the free-only look is on. */
+.model-free {
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: rgb(var(--composer-accent-rgb));
+  background: rgba(var(--composer-accent-rgb), 0.14);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  vertical-align: 1px;
+}
+
+/* When the free-only look finds nothing among the providers connected: the reason, and nowhere to press by mistake. */
+.model-empty {
+  max-width: 340px;
+  padding: 22px 48px 26px 0;
+  color: rgba(var(--fg-rgb), 0.45);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: right;
+}
+
 .model-slot {
   flex: none;
   display: grid;
@@ -11367,6 +11426,11 @@ h6.md-h {
   color: rgb(var(--success-rgb));
 }
 
+.provider-state.is-bad {
+  background: rgba(var(--danger-rgb), 0.16);
+  color: rgb(var(--danger-rgb));
+}
+
 .provider .settings-row {
   padding: 14px 0;
 }
@@ -12063,6 +12127,24 @@ h6.md-h {
   align-items: flex-end;
 }
 
+.settings-whatsapp-qr {
+  gap: 10px;
+  max-width: 260px;
+}
+
+.whatsapp-qr {
+  width: 180px;
+  height: 180px;
+  padding: 8px;
+  border-radius: 12px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+
+.whatsapp-qr[hidden] {
+  display: none;
+}
+
 .settings-key-box {
   position: relative;
 }
@@ -12188,6 +12270,23 @@ h6.md-h {
 
 .general-access-open {
   margin-top: 12px;
+}
+
+/* The folder the chats without a project are kept in: a path long enough to want its own line, shown in the mono face
+   so the separators read clearly, wrapping rather than pushing the panel wide, and selectable so it can be copied. */
+.general-chatsfolder-path {
+  margin: 6px 0 0;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: rgba(var(--fg-rgb), 0.07);
+  font-family: var(--mono-font);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.general-chatsfolder-path:empty {
+  display: none;
 }
 
 /* Settings → Composer: the picture of a prediction at work (settings-composer.js). The end of an answer, and under it
@@ -21665,4 +21764,304 @@ html:not([data-theme="light"]) .tour :is([data-mark="x"], [data-mark="steam"], [
   .tour-result :is(path, circle, span) {
     transition: none !important;
   }
+}
+
+/* —— Phone access ——————————————————————————————————————————————————————
+   The window a phone is read into. It is a card of the settings' own glass, small enough to stand over the sidebar's
+   row: the code a camera reads at the top, what the app says of it under, and the phones it has let in below that.
+   It comes and goes as the settings do — out of a blur, a little wider and flatter than it stands. That a phone is
+   connected shows on the sidebar's button itself (mobile-button.js), without this window being opened. The same rows
+   stand in the settings' Phone access section, so the buttons and the list are dressed once for both. */
+.mobile-access {
+  position: fixed;
+  inset: 0;
+  width: min(320px, 100% - 48px);
+  max-width: none;
+  /* inset:0 with an auto height stretches the box to the window; the card is to be as tall as what it holds. */
+  height: fit-content;
+  max-height: min(620px, 100% - 48px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: rgb(0, 0, 0);
+  color: var(--fg-primary);
+  border-radius: var(--chat-radius);
+  box-shadow: var(--contour), 0 20px 56px rgba(0, 0, 0, calc(0.42 * var(--shadow)));
+  opacity: 0;
+  transform: scale(1.06);
+  filter: blur(12px);
+  transition:
+    opacity 0.11s ease-out,
+    transform 0.11s ease-out,
+    filter 0.11s ease-out,
+    overlay 0.11s allow-discrete,
+    display 0.11s allow-discrete;
+}
+
+[data-theme="light"] .mobile-access {
+  background: rgb(255, 255, 255);
+  box-shadow: 0 0 0 1px rgba(30, 48, 88, 0.18), 0 20px 56px rgba(0, 0, 0, calc(0.42 * var(--shadow)));
+}
+
+.mobile-access[open] {
+  display: flex;
+  flex-direction: column;
+  opacity: 1;
+  transform: none;
+  filter: none;
+  transition:
+    opacity 0.133s cubic-bezier(0.37, 0, 0.63, 1),
+    transform 0.133s cubic-bezier(0.37, 0, 0.63, 1),
+    filter 0.133s cubic-bezier(0.37, 0, 0.63, 1),
+    overlay 0.133s allow-discrete,
+    display 0.133s allow-discrete;
+}
+
+.mobile-access:focus {
+  outline: none;
+}
+
+.mobile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 14px 0;
+}
+
+.mobile-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.mobile-body {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px 4px;
+  overflow: auto;
+}
+
+/* The code, on the whitest ground the app has: a camera reads a dark pattern on white, whatever the theme is. */
+.mobile-qr-box {
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  border-radius: calc(var(--chat-radius) - 4px);
+  background: rgb(255, 255, 255);
+}
+
+.mobile-qr-box[hidden] {
+  display: none;
+}
+
+.mobile-qr {
+  width: 190px;
+  height: 190px;
+  image-rendering: pixelated;
+}
+
+/* Why there is no code to read: a line of the page's own, not a square of a camera's. */
+.mobile-aside {
+  margin: 0;
+  padding: 26px 6px;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--fg-secondary);
+}
+
+.mobile-aside[hidden] {
+  display: none;
+}
+
+.mobile-lead {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--fg-secondary);
+}
+
+/* One line of what the app sees: lit by the state it is in, so the row says itself whether a phone is here. */
+.mobile-status {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-primary);
+}
+
+.mobile-status[data-tone="off"] {
+  color: var(--fg-secondary);
+  font-weight: 500;
+}
+
+.mobile-status[data-tone="ask"] {
+  color: rgb(255, 186, 92);
+}
+
+.mobile-status[data-tone="live"] {
+  color: rgb(96, 214, 158);
+}
+
+[data-theme="light"] .mobile-status[data-tone="ask"] {
+  color: rgb(176, 106, 8);
+}
+
+[data-theme="light"] .mobile-status[data-tone="live"] {
+  color: rgb(18, 122, 78);
+}
+
+/* The phone at the door: its name, and the user's yes or no. Nothing a phone may do until one of them is pressed. */
+.mobile-ask {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: calc(var(--chat-radius) - 4px);
+  background: rgba(var(--fg-rgb), 0.06);
+}
+
+.mobile-ask[hidden] {
+  display: none;
+}
+
+.mobile-ask-words {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.mobile-ask-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.mobile-devices {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mobile-device {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 4px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.mobile-device:hover {
+  background: rgba(var(--fg-rgb), 0.05);
+}
+
+.mobile-device-mark {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(var(--fg-rgb), 0.22);
+}
+
+.mobile-device.is-online .mobile-device-mark {
+  background: rgb(96, 214, 158);
+}
+
+.mobile-device-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mobile-device-when {
+  color: var(--fg-secondary);
+  font-size: 11.5px;
+}
+
+.mobile-device.is-none {
+  grid-template-columns: 1fr;
+  color: var(--fg-secondary);
+}
+
+.mobile-warn {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: rgb(255, 186, 92);
+}
+
+[data-theme="light"] .mobile-warn {
+  color: rgb(176, 106, 8);
+}
+
+.mobile-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 14px;
+}
+
+.mobile-foot-space {
+  flex: 1;
+}
+
+:is(.mobile-access, .settings) :is(.mobile-stop, .mobile-quiet, .mobile-solid) {
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--fg-primary);
+  background: rgba(var(--fg-rgb), 0.09);
+  -webkit-app-region: no-drag;
+}
+
+:is(.mobile-access, .settings) .mobile-solid {
+  background: rgba(var(--fg-rgb), 0.9);
+  color: rgb(12, 14, 20);
+}
+
+[data-theme="light"] :is(.mobile-access, .settings) .mobile-solid {
+  color: rgb(255, 255, 255);
+}
+
+:is(.mobile-access, .settings) :is(.mobile-stop, .mobile-quiet, .mobile-solid):hover {
+  filter: brightness(1.16);
+}
+
+:is(.mobile-access, .settings) :is(.mobile-stop, .mobile-quiet, .mobile-solid):disabled {
+  opacity: 0.4;
+  cursor: default;
+  filter: none;
+}
+
+:is(.mobile-access, .settings) :is(.mobile-stop, .mobile-quiet, .mobile-solid):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* The settings' rows of the same thing: the address a phone opens, plain text to read rather than to type, and the
+   phones let in standing one under another. */
+.settings-mobile-control {
+  display: grid;
+  gap: 7px;
+  justify-items: start;
+}
+
+.settings-mobile-url {
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: rgba(var(--fg-rgb), 0.07);
+  font-size: 12px;
+  user-select: text;
+}
+
+.settings-mobile-url:empty {
+  display: none;
 }

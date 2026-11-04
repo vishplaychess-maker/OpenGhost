@@ -129,6 +129,35 @@ class AwakeSettings {
  }
 }
 
+// Whether the agent may use the computer's mouse, keyboard and screen at all. Off until the user turns it on. Turning it
+// on only offers the tools to the model: each click and keystroke still asks on a card of its own, in every mode.
+const AUTOMATION_KEY = 'openghost.automation';
+
+class AutomationSettings {
+ constructor(root) {
+  this.root = root;
+  this.toggle = root.querySelector('.automation-switch');
+  if (!window.openghost?.tools?.authorize) { root.hidden = true; return; }
+  root.querySelector('.automation-note').textContent = I18n.t(`settings.automation.note.${window.openghost.platform === 'darwin' ? 'mac' : window.openghost.platform === 'win32' ? 'windows' : 'linux'}`);
+  this.toggle.addEventListener('click', () => this.set(!this.on));
+  this.paint();
+ }
+
+ get on() {
+  try { return localStorage.getItem(AUTOMATION_KEY) === 'on'; } catch { return false; }
+ }
+
+ set(on) {
+  try { localStorage.setItem(AUTOMATION_KEY, on ? 'on' : 'off'); } catch {}
+  this.paint();
+ }
+
+ paint() {
+  this.root.classList.toggle('is-off', !this.on);
+  this.toggle.setAttribute('aria-checked', String(this.on));
+ }
+}
+
 class GeneralSettings {
  constructor({ root, context }) {
   this.root = root;
@@ -156,6 +185,15 @@ class GeneralSettings {
     <p class="settings-status general-status" role="status"></p>
     <input class="general-picker" type="file" multiple hidden>
    </section>
+   <section class="general-block general-chatsfolder">
+    <div class="general-head">
+     <span class="settings-label">${t('settings.chatsfolder')}</span>
+     <button type="button" class="settings-button general-chatsfolder-pick">${t('settings.chatsfolder.pick')}</button>
+    </div>
+    <p class="settings-hint">${t('settings.chatsfolder.hint')}</p>
+    <p class="general-chatsfolder-path"></p>
+    <p class="settings-status general-chatsfolder-status" role="status" hidden></p>
+   </section>
    <section class="general-block general-quick" hidden>
     <div class="general-head quick-head">
      <span class="settings-label" id="settings-quick-label">${t('settings.quick')}</span>
@@ -175,6 +213,14 @@ class GeneralSettings {
     <div class="quick-row awake-lid"><span class="quick-row-label" id="settings-awake-lid">${t('settings.awake.lid')}</span><button type="button" class="memory-switch awake-lid-switch" role="switch" aria-labelledby="settings-awake-lid"><span class="memory-switch-knob"></span></button></div>
     <p class="settings-hint awake-lid-hint"></p>
    </section>
+   <section class="general-block general-automation">
+    <div class="general-head quick-head">
+     <span class="settings-label" id="settings-automation-label">${t('settings.automation')}</span>
+     <button type="button" class="memory-switch automation-switch" role="switch" aria-labelledby="settings-automation-label"><span class="memory-switch-knob"></span></button>
+    </div>
+    <p class="settings-hint">${t('settings.automation.hint')}</p>
+    <p class="settings-hint automation-note"></p>
+   </section>
    <section class="general-block general-access" hidden>
     <div class="general-head">
      <span class="settings-label">${t('settings.access')}</span>
@@ -190,6 +236,7 @@ class GeneralSettings {
   new LanguageSettings(root.querySelector('.general-language'));
   this.quick = new QuickSettings(root.querySelector('.general-quick'));
   this.awake = new AwakeSettings(root.querySelector('.general-awake'));
+  new AutomationSettings(root.querySelector('.general-automation'));
   // A Mac asks the user itself before the app first opens some folders. The block is there only on a Mac.
   this.access = root.querySelector('.general-access');
   root.querySelector('.general-access-open').addEventListener('click', () => window.openghost?.access?.open());
@@ -209,6 +256,13 @@ class GeneralSettings {
    this.paintCount();
   });
   root.querySelector('.general-drop').addEventListener('click', () => this.picker.click());
+  // Where the chats without a project folder are kept. A new folder takes what was already there along; a name
+  // already at the other end is left where it is, and the line under the path says how many were.
+  this.chatsFolder = root.querySelector('.general-chatsfolder-path');
+  this.chatsNote = root.querySelector('.general-chatsfolder-status');
+  root.querySelector('.general-chatsfolder-pick').addEventListener('click', () => this.pickChatsFolder());
+  window.openghost?.chatsFolder?.().then(folder => folder && this.showChatsFolder(folder)).catch(() => {});
+  window.openghost?.onChatsFolder?.(folder => this.showChatsFolder(folder));
   this.picker.addEventListener('change', () => {
    this.add(this.picker.files);
    this.picker.value = '';
@@ -250,6 +304,26 @@ class GeneralSettings {
  paintCount() {
   const length = this.input.value.length, max = this.context.limits.instructions;
   this.count.textContent = length > max * 0.85 ? `${length.toLocaleString('en-US')} / ${max.toLocaleString('en-US')}` : '';
+ }
+
+ // The path is shown as it stands on the disk; the line under it says what came along when it was pointed elsewhere.
+ showChatsFolder(folder, note = '') {
+  this.chatsFolder.textContent = folder;
+  this.chatsFolder.title = folder;
+  this.chatsNote.hidden = !note;
+  this.chatsNote.textContent = note;
+ }
+
+ async pickChatsFolder() {
+  const picked = await window.openghost?.pickFolder?.().catch(() => null);
+  if (!picked?.path) return;
+  const said = await window.openghost.setChatsFolder(picked.path).catch(() => null);
+  if (!said) return this.showChatsFolder(this.chatsFolder.textContent, I18n.t('settings.chatsfolder.failed'));
+  if (said.failure) return this.showChatsFolder(this.chatsFolder.textContent, said.failure);
+  const notes = [];
+  if (said.along) notes.push(I18n.t('settings.chatsfolder.moved', { n: said.along }));
+  if (said.left?.length) notes.push(I18n.t('settings.chatsfolder.left', { n: said.left.length }));
+  this.showChatsFolder(said.path, notes.join(' '));
  }
 
  async add(files) {

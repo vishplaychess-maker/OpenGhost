@@ -53,7 +53,7 @@ const LIFTED = { below: 140, margin: 24 };
 const FIT = 0.62;
 // Many models turn the list into a drum: rows away from its middle drift right, tilt and shrink a little.
 const DRUM = { reach: 320, shift: 34, tilt: 3.2, shrink: 0.07 };
-const GROUPS = { chatgpt: 'ChatGPT', openai: 'OpenAI API', anthropic: 'Anthropic', deepseek: 'DeepSeek', openrouter: 'OpenRouter', local: 'Local', custom: 'Custom API' };
+const GROUPS = { chatgpt: 'ChatGPT', openai: 'OpenAI API', grok: 'Grok', iteracompute: 'IteraCompute', zro: 'Zro', infron: 'Infron', tokenharbor: 'Token Harbor', yeta: 'Yeta', anthropic: 'Anthropic', deepseek: 'DeepSeek', openrouter: 'OpenRouter', nvidia: 'NVIDIA', gemini: 'Google Gemini', venice: 'Venice', local: 'Local', custom: 'Custom API' };
 // A provider with many models of many companies shows the companies, and a company opens into its models on a press:
 // from how many models on, how its models come out (the nearest first, a step apart, only as many as can be seen), and
 // how long the list takes to settle after a company opens or shuts.
@@ -121,6 +121,7 @@ class ModelStage {
   this.state = 'closed';
   this.rows = [];
   this.groups = [];
+  this.head = null;
   this.companies = new Map();
   this.typed = { text: '', at: 0 };
   this.settling = 0;
@@ -157,9 +158,10 @@ class ModelStage {
    const row = event.target.closest('.model-row');
    if (row && this.state === 'open') this.pick(row);
   });
-  // A press on the list between the models closes it, the same as a press on the veil.
+  // A press on the list between the models closes it, the same as a press on the veil. The row over them is a control,
+  // not one of the between places: it changes the look instead.
   this.list.addEventListener('pointerdown', event => {
-   if (!event.target.closest('.model-row, .model-confirm')) this.cancel();
+   if (!event.target.closest('.model-row, .model-confirm, .model-filter')) this.cancel();
   });
   this.list.addEventListener('scroll', () => this.scheduleBend(true), { passive: true });
   root.addEventListener('pointermove', event => { this.pointer = { x: event.clientX, y: event.clientY }; });
@@ -193,7 +195,7 @@ class ModelStage {
  }
 
  modelRow(model, company = null) {
-  const name = model.name || model.id, info = meta(model);
+  const name = model.name || model.id, info = meta(model), free = model.free === true;
   const row = document.createElement('button');
   row.type = 'button';
   row.className = company ? 'model-row is-sub' : 'model-row';
@@ -202,9 +204,11 @@ class ModelStage {
   row.dataset.find = name.toLowerCase();
   if (company) row.dataset.of = company.key;
   row.setAttribute('role', 'option');
-  row.setAttribute('aria-label', `${name}, ${info}`);
+  row.setAttribute('aria-label', `${name}, ${info}${free ? `, ${I18n.t('model.free.badge')}` : ''}`);
   row.setAttribute('aria-selected', String(model.id === this.chat.model));
-  row.innerHTML = `<span class="model-text" aria-hidden="true"><span class="model-name">${letters(name)}</span><span class="model-meta">${escapeHtml(info)}</span></span><span class="model-mark" aria-hidden="true"></span>`;
+  // The word that it costs nothing stands by the model whether or not the list is filtered to free ones: it is a thing
+  // about the model, not about the looking.
+  row.innerHTML = `<span class="model-text" aria-hidden="true"><span class="model-name">${letters(name)}</span><span class="model-meta">${escapeHtml(info)}${free ? `<span class="model-free">${escapeHtml(I18n.t('model.free.badge'))}</span>` : ''}</span></span><span class="model-mark" aria-hidden="true"></span>`;
   return row;
  }
 
@@ -228,7 +232,11 @@ class ModelStage {
  // models of many companies shows the companies, by name; only the company of the chat's model starts open.
  build() {
   this.list.setAttribute('aria-label', I18n.t('model'));
-  const models = this.settings.models, providers = [...new Set(models.map(model => model.provider))];
+  const all = this.settings.models;
+  // Only the models that cost nothing, when the picker is asked to look that way. A change of looking, not of using:
+  // the chat keeps the model it is on, free or not, and the composer still names it.
+  const models = this.settings.freeOnly ? all.filter(model => model.free === true) : all;
+  const providers = [...new Set(models.map(model => model.provider))];
   const chosen = this.settings.find(this.chat.model);
   const slots = [];
   this.rows = [];
@@ -266,9 +274,54 @@ class ModelStage {
   this.ask.setAttribute('role', 'alertdialog');
   this.askSlot = slot(this.ask);
   this.askSlot.classList.add('is-folded');
-  this.list.replaceChildren(...slots, this.askSlot);
+  // Over the models, and outside the drum and the rows: the look that keeps only what costs nothing.
+  this.head = slot(this.filterRow());
+  if (!models.length) {
+   const note = document.createElement('div');
+   note.className = 'model-empty';
+   note.textContent = I18n.t(this.settings.freeOnly ? 'model.free.none' : 'model.none');
+   slots.push(slot(note));
+  }
+  this.list.replaceChildren(this.head, ...slots, this.askSlot);
   this.list.scrollTop = 0;
   this.marked = null;
+ }
+
+ // The row above the models: a switch for the free-only look, named beside it. The whole row answers a press.
+ filterRow() {
+  const on = this.settings.freeOnly === true, name = I18n.t('model.free.only');
+  const row = document.createElement('div');
+  row.className = 'model-filter';
+  row.addEventListener('click', () => this.setFree(!this.settings.freeOnly));
+  const label = document.createElement('span');
+  label.className = 'model-filter-label';
+  label.textContent = name;
+  const switchEl = document.createElement('button');
+  switchEl.type = 'button';
+  switchEl.className = 'memory-switch model-filter-switch';
+  switchEl.setAttribute('role', 'switch');
+  switchEl.setAttribute('aria-checked', String(on));
+  switchEl.setAttribute('aria-label', name);
+  const knob = document.createElement('span');
+  knob.className = 'memory-switch-knob';
+  switchEl.append(knob);
+  row.append(label, switchEl);
+  return row;
+ }
+
+ // The look changes and the list is built again under it. Only the chat's own model takes the glyph: a free row that
+ // happens to stand first is not the model the chat is on, and saying it were would be a lie about the choice.
+ setFree(on) {
+  if (this.settings.freeOnly === on) return;
+  this.settings.setFreeOnly(on);
+  this.dropFlyer();
+  this.build();
+  this.place();
+  this.typed = { text: '', at: 0 };
+  const current = this.current(), own = this.rows.find(row => row.dataset.model === this.chat.model);
+  this.middle(current);
+  this.rest(current);
+  if (own) this.mark(own);
  }
 
  // The one glyph stands next to the chosen model: moving it moves the choice.
@@ -725,6 +778,8 @@ class ModelStage {
   this.dropFlyer();
   this.dropCarrier();
   const others = [...this.rows.filter(other => other !== row), ...this.groups].map(el => el.closest('.model-slot'));
+  // The row over the models goes with the rest: the question is about a model, not about how the list is looked at.
+  if (this.head) others.push(this.head);
   for (const box of others) box.classList.add('is-going');
   this.mark(row);
   const from = this.name(this.chat.model), to = this.name(row.dataset.model);

@@ -1,11 +1,13 @@
 'use strict';
 
-// OpenAI through the Responses API: with an API key against api.openai.com, or with a ChatGPT sign-in against the Codex backend.
+// OpenAI through the Responses API: with an API key against api.openai.com, with a ChatGPT sign-in against the Codex
+// backend, or with a Grok sign-in against the CLI door of grok.com, which speaks the same shape.
 // The chat keeps its history in the Chat Completions shape; this module turns it into Responses input and the stream back into that shape.
 const os = require('node:os');
 
 const API_URL = 'https://api.openai.com/v1';
 const CODEX_URL = 'https://chatgpt.com/backend-api/codex';
+const XAI_URL = 'https://cli-chat-proxy.grok.com/v1';
 const NO_VISION = '[A picture was here, but the selected model can\'t see pictures]';
 // The catalogue asks which version of Codex is asking and leaves out models too new for it. The app is not Codex and
 // takes every model there is.
@@ -77,11 +79,13 @@ const chats = list => list.filter(item => NAMED.chat.test(item.id) && !NAMED.oth
 
 // A key gets every chat model it may use: first the ones the catalogue describes, in the catalogue's order, then the
 // others by their names, the newest first, then the ones the user named by hand that neither holds.
-async function models({ provider, key, names = [] }, { chatgpt, version = '', apiUrl = API_URL, codexUrl = CODEX_URL } = {}) {
+async function models({ provider, key, names = [] }, { chatgpt, grok, version = '', apiUrl = API_URL, codexUrl = CODEX_URL } = {}) {
  if (provider === 'chatgpt') {
   const account = await chatgpt();
   return offered(await catalog(`chatgpt ${account.account || ''}`, signed(account, version), codexUrl)).map(describe('chatgpt'));
  }
+ // A plan's list comes whole from the provider: it is what the plan may use, in the order it wants them shown.
+ if (provider === 'grok') return grok.models();
  const response = await fetch(`${apiUrl}/models`, { headers: { Authorization: `Bearer ${key}` } });
  if (!response.ok) throw await failure(response);
  const usable = new Map(((await response.json()).data || []).map(item => [item.id, item]));
@@ -104,13 +108,14 @@ function parts(content, vision) {
   : vision ? { type: 'input_image', image_url: part.image_url.url, detail: 'auto' } : { type: 'input_text', text: NO_VISION });
 }
 
-// System messages become the instructions; a reply that came from OpenAI goes back as its own items, reasoning included.
-function convert(messages, vision) {
- const instructions = [], input = [];
+// System messages become the instructions; a reply that came from the same backend goes back as its own items, reasoning
+// included. Items from the other one stay out: their encrypted reasoning only means something to the backend that wrote it.
+function convert(messages, vision, provider = 'openai') {
+ const instructions = [], input = [], native = provider === 'grok' ? 'grok' : 'openai';
  for (const message of messages) {
   if (message.role === 'system') instructions.push(text(message.content));
   else if (message.role === 'tool') input.push({ type: 'function_call_output', call_id: message.tool_call_id, output: message.content || '' });
-  else if (message.role === 'assistant' && message.native?.provider === 'openai') input.push(...message.native.items);
+  else if (message.role === 'assistant' && message.native?.provider === native) input.push(...message.native.items);
   else if (message.role === 'assistant') {
    if (message.content) input.push({ role: 'assistant', content: [{ type: 'output_text', text: message.content }] });
    for (const call of message.tool_calls || []) input.push({ type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments || '{}' });
@@ -161,7 +166,12 @@ async function* events(body) {
  }
 }
 
-async function target({ provider, key, session }, { chatgpt, version, apiUrl = API_URL, codexUrl = CODEX_URL }) {
+async function target({ provider, key, session }, { chatgpt, grok, version, apiUrl = API_URL, codexUrl = CODEX_URL }) {
+ if (provider === 'grok') {
+  const headers = grok.signed(await grok.credentials());
+  if (session) headers['session-id'] = session;
+  return { url: `${XAI_URL}/responses`, headers };
+ }
  if (provider !== 'chatgpt') return { url: `${apiUrl}/responses`, headers: { Authorization: `Bearer ${key}` } };
  const headers = signed(await chatgpt(), version);
  if (session) headers['session-id'] = session;
@@ -171,7 +181,7 @@ async function target({ provider, key, session }, { chatgpt, version, apiUrl = A
 async function stream(request, context) {
  const { model: api, effort, vision = true, messages, tools } = request;
  const { signal, onEvent = () => {} } = context;
- const { instructions, input } = convert(messages, vision);
+ const { instructions, input } = convert(messages, vision, request.provider);
  const body = {
   model: api,
   instructions,
@@ -190,8 +200,8 @@ async function stream(request, context) {
   body.parallel_tool_calls = true;
  }
  // One key for all of a chat's requests keeps them on the servers that already hold the chat's cache. OpenAI's own Codex
- // sends the same key; the ChatGPT backend also reads it from the session-id header.
- if (request.session) body.prompt_cache_key = request.session;
+ // sends the same key; the ChatGPT backend also reads it from the session-id header. The Grok door knows only the header.
+ if (request.session && request.provider !== 'grok') body.prompt_cache_key = request.session;
  // A summary and a short side job say how long the answer may be. Never past what this model can write, when that is known.
  if (request.maxTokens) body.max_output_tokens = request.output > 0 ? Math.min(request.maxTokens, request.output) : request.maxTokens;
  const { url, headers } = await target(request, context);
@@ -215,7 +225,7 @@ async function stream(request, context) {
   response = await post();
   if (!response.ok) throw await failure(response);
  }
- const result = { content: '', reasoning: '', toolCalls: [], finishReason: null, usage: null, native: { provider: 'openai', items: [] } };
+ const result = { content: '', reasoning: '', toolCalls: [], finishReason: null, usage: null, native: { provider: request.provider === 'grok' ? 'grok' : 'openai', items: [] } };
  if (stale) result.stale = true;
  let textItem = '';
  const say = delta => { result.content += delta; onEvent({ type: 'content', delta }); };

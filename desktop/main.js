@@ -15,6 +15,9 @@ const Lang = require('./lang');
 const Reveal = require('./reveal');
 const Notify = require('./notify');
 const Routines = require('./routines');
+const Telegram = require('./telegram');
+const WhatsApp = require('./whatsapp');
+const Mobile = require('./mobile-bridge');
 const Skills = require('./skills');
 const Update = require('./update');
 const Pictures = require('./pictures');
@@ -89,6 +92,10 @@ function createShortcut() {
 
 const storeDir = () => path.join(app.getPath('userData'), 'store');
 const writes = new Map();
+// Where the chats without a project folder are kept (Settings → General). Read before the window is made, so the
+// page is never shown one place and given another a moment later: the tools keep one chat out of another's folder by
+// this path, and a chat works where the page says it works.
+const CHATS_KEY = 'chats-folder';
 
 function storeFile(key) {
  if (typeof key !== 'string' || !STORE_KEY.test(key)) throw new Error(`Bad store key: ${key}`);
@@ -209,6 +216,41 @@ ipcMain.handle('folder:pick', async event => {
 
 ipcMain.handle('folder:reveal', (event, folder) => typeof folder === 'string' && shell.openPath(folder));
 ipcMain.handle('folder:chats', () => Tools.CHATS);
+// Chats without a project folder each keep a folder of their own under the chats folder. Pointing the app at another
+// one takes what was already there along: a chat whose folder stayed behind would read as an empty one. Nothing is
+// deleted, and a name already taken at the other end is left where it is and said so.
+async function carry(from, to) {
+ let names = [];
+ try {
+  names = await fs.promises.readdir(from, { withFileTypes: true });
+ } catch {
+  return { along: 0, left: [] };
+ }
+ let along = 0;
+ const left = [];
+ for (const entry of names.filter(item => item.isDirectory())) {
+  const src = path.join(from, entry.name), dst = path.join(to, entry.name);
+  if (await fs.promises.stat(dst, { throwIfNoEntry: false }) || path.resolve(src) === path.resolve(dst)) { left.push(entry.name); continue; }
+  along += await fs.promises.cp(src, dst, { recursive: true, force: false, errorOnExist: true }).then(() => 1, () => { left.push(entry.name); return 0; });
+ }
+ return { along, left };
+}
+ipcMain.handle('folder:chats:set', async (event, dir) => {
+ if (!fromApp(event)) return null;
+ const next = Tools.chatsTo(dir);
+ if (!next) return { failure: 'That is not a folder chats can be kept in.' };
+ try {
+  await fs.promises.mkdir(next, { recursive: true });
+ } catch (error) {
+  return { failure: `Nothing could be made there: ${error.message}` };
+ }
+ const from = Tools.CHATS;
+ const carried = path.resolve(from) === path.resolve(next) ? { along: 0, left: [] } : await carry(from, next);
+ Tools.setChats(next);
+ await writeStore(CHATS_KEY, { version: 1, path: next });
+ for (const each of BrowserWindow.getAllWindows()) if (!each.isDestroyed()) each.webContents.send('folder:chats', next);
+ return { path: next, ...carried };
+});
 ipcMain.handle('folder:release', (event, folder) => fromApp(event) && Tools.release(folder));
 ipcMain.handle('store:read', (event, key) => readStore(key));
 // With the quick chat there are two windows over one store: each is told what the other has written.
@@ -283,7 +325,8 @@ ipcMain.handle('theme:set', (event, choice) => {
  }
  return nativeTheme.shouldUseDarkColors;
 });
-ipcMain.handle('tool:run', (event, id, name, args, cwd) => fromApp(event) ? Tools.runTool(id, name, args, cwd, event.sender) : { error: 'Not allowed' });
+ipcMain.handle('tool:run', (event, id, name, args, cwd, ticket) => fromApp(event) ? Tools.runTool(id, name, args, cwd, event.sender, ticket) : { error: 'Not allowed' });
+ipcMain.handle('tool:authorize', (event, name, args) => fromApp(event) ? Tools.authorize(name, args, event.sender) : { error: 'Not allowed' });
 ipcMain.on('browser:shown', (event, value) => { if (fromApp(event)) Browser.setShown(value); });
 ipcMain.handle('tool:cancel', (event, id) => { if (fromApp(event)) Tools.cancel(id); });
 ipcMain.handle('tool:environment', event => fromApp(event) ? Tools.environment() : null);
@@ -298,7 +341,7 @@ ipcMain.handle('proof:facts', (event, file) => fromApp(event) ? Proof.facts(file
 ipcMain.handle('proof:project', (event, cwd) => fromApp(event) ? Proof.project(cwd) : { checks: [], tests: false });
 ipcMain.handle('proof:glimpse', (event, request) => fromApp(event) ? Proof.glimpse(request) : { ok: false, error: 'not allowed' });
 // Skills (desktop/skills.js): those a chat can use, one's instructions, and one put in from a link; every window is told.
-Skills.setup({ fromApp, chats: Tools.CHATS, changed: () => { for (const each of BrowserWindow.getAllWindows()) if (!each.isDestroyed()) each.webContents.send('skills:changed'); } });
+Skills.setup({ fromApp, chats: () => Tools.CHATS, changed: () => { for (const each of BrowserWindow.getAllWindows()) if (!each.isDestroyed()) each.webContents.send('skills:changed'); } });
 ipcMain.handle('pdf:read', (event, source) => fromApp(event) ? Pdf.read(source) : { text: '', reason: 'unreadable' });
 LLM.register(fromApp);
 Keys.register(fromApp);
@@ -316,6 +359,97 @@ ipcMain.handle('pictures:copy', (event, from, to) => fromApp(event) ? Pictures.c
 const EDITS = new Set(['cut', 'copy', 'paste', 'selectAll']);
 ipcMain.handle('edit:do', (event, action) => { if (fromApp(event) && EDITS.has(action)) event.sender[action](); });
 Pictures.register();
+
+// The app keeps everything of a person in one folder, and Windows puts that folder under C:\Users\<name>\AppData.
+// OpenGhost was put on D:, so at the first start after this is added the folder moves there, once.
+// The old folder is only ever read from and nothing in it is deleted: the move is undone by taking away the word
+// written below and starting again, and both copies stay whole until the new one is checked over by hand.
+const DATA_HOME = 'D:\\experiment\\.openghost-data';
+const MOVED = '.openghost-data-moved';
+// What Chromium makes again by itself once its folder has moved: page parts, shader blobs, its own locks. Not carried
+// over is not left behind — a cache is nothing a person lost.
+const REGROWN = new Set(['Cache', 'Code Cache', 'GPUCache', 'GrShaderCache', 'ShaderCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'GPUPersistentCache', 'Shared Dictionary', 'Service Worker', 'blob_storage', 'DIPS', 'DIPS-wal', 'lockfile', 'declarative_performance_observer.db', 'declarative_performance_observer.db-journal']);
+
+// Whether another OpenGhost holds this folder: Chromium keeps its lockfile to itself while it runs, and a folder read
+// through a running program's locks can catch a chat half-written and carry the half over for good.
+function inUse(where) {
+ try {
+  fs.closeSync(fs.openSync(path.join(where, 'lockfile'), 'r+'));
+  return false;
+ } catch (error) {
+  return ['EBUSY', 'EPERM', 'EACCES'].includes(error.code);
+ }
+}
+
+// Every file that is not a cache, with the folders they hang in. Names back what was put down and how big it was.
+function carry(from, to, at = '', done = []) {
+ fs.mkdirSync(to, { recursive: true });
+ for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+  if (REGROWN.has(entry.name)) continue;
+  const source = path.join(from, entry.name), target = path.join(to, entry.name), name = at ? `${at}/${entry.name}` : entry.name;
+  if (entry.isDirectory()) carry(source, target, name, done);
+  else if (entry.isFile()) {
+   fs.copyFileSync(source, target);
+   done.push([name, fs.statSync(source).size]);
+  }
+ }
+ return done;
+}
+
+// A move is kept only when every file came over with the bytes it went with. A folder left by a move that did not
+// finish is written into again, so this is asked after every try and not only the first.
+function short(where, copied) {
+ const gaps = [];
+ for (const [name, size] of copied) {
+  let came = 0;
+  try { came = fs.statSync(path.join(where, ...name.split('/'))).size; } catch {}
+  if (came !== size) gaps.push(`${name} (${came} of ${size} bytes)`);
+ }
+ return gaps;
+}
+
+function moveDataHome() {
+ if (process.platform !== 'win32') return;
+ // A folder asked for on the command line is a word said on purpose, and the move stands down before it.
+ if (process.argv.some(arg => String(arg).startsWith('--user-data-dir'))) return;
+ const from = app.getPath('userData');
+ if (path.resolve(from).toLowerCase() === path.resolve(DATA_HOME).toLowerCase()) return;
+ // One word says a move was finished. After it the app only takes the new folder and carries nothing again, so a chat
+ // written where the data now lives is never overwritten by its older self from the other drive.
+ if (fs.existsSync(path.join(DATA_HOME, MOVED))) {
+  app.setPath('userData', DATA_HOME);
+  return;
+ }
+ // A folder that already holds something, with no word that a move finished, is a profile from somewhere else and not
+ // ours to write into: the chats it holds that the live one has done with would come back wearing the older date.
+ let already = 0;
+ try { already = fs.readdirSync(DATA_HOME).length; } catch {}
+ if (already) {
+  console.error(`OpenGhost stayed on ${from}: ${DATA_HOME} already holds ${already} entries and this app did not put them there. Empty it, or name another folder, and start again.`);
+  return;
+ }
+ if (!fs.existsSync(from)) return;
+ if (inUse(from)) {
+  console.error(`OpenGhost stayed on ${from}: another OpenGhost has that folder open. Quit it and start again to move the data.`);
+  return;
+ }
+ try {
+  const copied = carry(from, DATA_HOME);
+  const gaps = short(DATA_HOME, copied);
+  if (gaps.length) throw new Error(`${gaps.length} of ${copied.length} files did not come over: ${gaps.slice(0, 3).join(', ')}`);
+  fs.writeFileSync(path.join(DATA_HOME, MOVED), `moved from ${from} on ${new Date().toISOString()}\n`);
+  app.setPath('userData', DATA_HOME);
+  // Windows locks the providers' keys to this person's login and not to the folder they sit in, and the word that
+  // unlocks them came over with them as Local State. If a provider asks to be signed in again, that is the reason and
+  // only that: nothing of the chats, the settings or the models moved wrong.
+  console.log(`OpenGhost moved ${copied.length} files of its data to ${DATA_HOME}. ${from} is left exactly as it was, to be removed by hand once the new folder is checked over.`);
+ } catch (error) {
+  // Nothing of the old folder was written to, so a move that did not finish costs only the retry.
+  console.error(`OpenGhost stayed on ${from}: the move did not finish (${error.message}).`);
+ }
+}
+
+moveDataHome();
 
 if (process.argv.includes('--create-shortcut')) {
  app.whenReady().then(() => {
@@ -352,9 +486,13 @@ if (process.argv.includes('--create-shortcut')) {
    win.on('closed', () => {
     win = null;
     Routines.unready();
-    // With the quick chat on, or a routine on, the app goes on in the tray, and an agent at work in the quick chat is
-    // not stopped: only what this window asked for is. Otherwise closing the window ends everything and the app.
-    if (Quick.on || Routines.alive) { LLM.cancelFrom(contents); return; }
+    Telegram.unready();
+    WhatsApp.unready();
+    Mobile.unready();
+    // With the quick chat on, a routine on, the Telegram bot on, WhatsApp auto-reply on, or a phone able to reach the
+    // app, the app goes on in the tray, and an agent at work in the quick chat is not stopped: only what this window
+    // asked for is. Otherwise closing the window ends everything and the app.
+    if (Quick.on || Routines.alive || Telegram.alive || WhatsApp.alive || Mobile.alive) { LLM.cancelFrom(contents); return; }
     Tools.cancelAll();
     LLM.cancelAll();
     Pdf.cancelAll();
@@ -364,8 +502,8 @@ if (process.argv.includes('--create-shortcut')) {
   }
   if (fresh) {
    win.webContents.on('did-finish-load', () => Notify.paint());
-   // Read anew, the page takes no routine until it says it is ready again.
-   win.webContents.on('did-start-loading', () => Routines.unready());
+   // Read anew, the page takes no routine, Telegram, WhatsApp or mobile message until it says it is ready again.
+   win.webContents.on('did-start-loading', () => { Routines.unready(); Telegram.unready(); WhatsApp.unready(); Mobile.unready(); });
    win.on('restore', keepAwake);
    win.on('show', keepAwake);
   }
@@ -385,6 +523,9 @@ if (process.argv.includes('--create-shortcut')) {
  // The button on the page shown after a sign-in in the browser (chatgpt.js).
  app.on('openghost:show', () => showMain());
  app.whenReady().then(() => {
+  try {
+   Tools.setChats(JSON.parse(fs.readFileSync(storeFile(CHATS_KEY), 'utf8'))?.path);
+  } catch {}
   if (SOURCE) {
    shell.writeShortcutLink(path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', `${SOURCE.name}.lnk`), 'create', {
     target: process.execPath, cwd: path.dirname(process.execPath), args: `"${ROOT}"`, icon: ICON, iconIndex: 0,
@@ -402,15 +543,28 @@ if (process.argv.includes('--create-shortcut')) {
   Browser.setup();
   Keys.load();
   Quick.setup({
-   fromApp, glass: GLASS, look, external, showMain, zoom: display => Size.zoom(display), icon: ICON, trayIcon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'), stay: () => Routines.alive,
+   fromApp, glass: GLASS, look, external, showMain, zoom: display => Size.zoom(display), icon: ICON, trayIcon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'), stay: () => Routines.alive || Telegram.alive || WhatsApp.alive || Mobile.alive,
    preload: path.join(__dirname, 'preload.js'), page: path.join(ROOT, 'index.html'), languages,
   });
+  // The Telegram bot (desktop/telegram.js): a message makes the main window unseen if it is not there and its page runs
+  // the agent turn. While the bot is on the app keeps its place in the tray.
+  Telegram.setup({ store: { read: readStore, write: writeStore }, fromApp, window: () => win, wake: () => showMain(null, true), changed: () => Quick.retray() });
+  // WhatsApp (desktop/whatsapp.js): the WhatsApp Web session kept in the app, answered by the agent of a chat of its own.
+  // A message makes the main window unseen if it is not there; while auto-reply is on the app stays in the tray.
+  WhatsApp.setup({ store: { read: readStore, write: writeStore }, fromApp, window: () => win, wake: () => showMain(null, true), changed: () => Quick.retray() });
+  // Mobile remote access (desktop/mobile-companion.js, its window-facing side in desktop/mobile-bridge.js): a phone
+  // pairs by a QR code and the agent answers it. A message makes the main window unseen if it is not there; while it
+  // listens the app stays in the tray, since a phone can only reach an app that is running.
+  Mobile.setup({ store: { read: readStore, write: writeStore }, fromApp, window: () => win, wake: () => showMain(null, true), changed: () => Quick.retray() });
   // A new version of the app (desktop/update.js), put in only while no agent works, here or in the quick chat.
   Update.setup({ fromApp, window: () => win, busy: () => working || Quick.working });
   if (!Quick.startHidden) showMain();
  });
- app.on('window-all-closed', () => { if (!Quick.on && !Routines.alive) app.quit(); });
+ app.on('window-all-closed', () => { if (!Quick.on && !Routines.alive && !Telegram.alive && !WhatsApp.alive && !Mobile.alive) app.quit(); });
  app.on('before-quit', event => {
+  Telegram.stop();
+  WhatsApp.stop();
+  Mobile.stop();
   Tools.cancelAll();
   Proof.cancelAll();
   if (!writes.size) return;

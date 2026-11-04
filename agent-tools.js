@@ -7,6 +7,13 @@ const SEARCH_RESULTS = 8;
 const MEDIA = { count: 6, max: 12, preview: 720 };
 const MODES = ['ask', 'auto', 'full'];
 
+// Tools that act on the computer itself, outside any project folder. Every input action is confirmed with the user on a
+// card in every mode, and the main process runs it only with the one-use ticket that Allow produces (desktop/automation-tool.js).
+const AUTOMATION = new Set(['take_screenshot', 'move_mouse', 'left_click', 'right_click', 'type_text', 'press_key']);
+const AUTOMATION_INPUT = new Set(['move_mouse', 'left_click', 'right_click', 'type_text', 'press_key']);
+const AUTOMATION_KEY = 'openghost.automation';
+const automationOn = () => { try { return localStorage.getItem(AUTOMATION_KEY) === 'on'; } catch { return false; } };
+
 const bridge = window.openghost?.tools || null;
 
 // The agent's shell follows the computer: PowerShell on Windows, zsh on a Mac, bash on Linux.
@@ -237,6 +244,21 @@ const SCHEMAS = [
    },
   },
  }, ['questions']),
+ // The computer's own screen, mouse and keyboard. They work outside the project folder, on the main display, and every
+ // step that touches the mouse or the keyboard is shown to the user for approval first.
+ fn('take_screenshot', 'Look at the main screen of this computer as it is now: the desktop and whatever apps are open. Use it before acting to find where things are, and after each action to see what changed. The answer tells you the screen size in pixels; the picture may be scaled down to fit, so convert a position you see into screen pixels before moving the mouse or clicking.', {}, []),
+ fn('move_mouse', 'Move the mouse pointer to a place on the main screen, in screen pixels: x from 0 at the left edge to the screen width minus 1, y from 0 at the top to the screen height minus 1. Take a screenshot first: it gives you the screen size and shows what is where. Moving the pointer clicks nothing. The user is asked to allow it.', {
+  x: { type: 'integer', description: 'Horizontal position in screen pixels, from the left edge' },
+  y: { type: 'integer', description: 'Vertical position in screen pixels, from the top edge' },
+ }, ['x', 'y']),
+ fn('left_click', 'Click the left mouse button once, where the pointer is. Move the pointer there with move_mouse first, and take a screenshot after to see what the click did. The user is asked to allow every click.', {}, []),
+ fn('right_click', 'Click the right mouse button once, where the pointer is, usually to open a context menu. Move the pointer there with move_mouse first. The user is asked to allow every click.', {}, []),
+ fn('type_text', 'Type text into the app that has the keyboard focus, as if on the keyboard. Click the field first with move_mouse and left_click, then type. Newlines press Enter and tabs press Tab. The user reads the text and is asked to allow it; keep passwords and other secrets out unless the user asked you to enter them.', {
+  text: { type: 'string', description: 'The exact text to type, in the user\'s language' },
+ }, ['text']),
+ fn('press_key', 'Press a key or a shortcut on the real keyboard, for example "Enter", "Tab", "Escape", "F5", "Ctrl+C", "Ctrl+Shift+S" or "Alt+Tab". Click or type first when a window needs focus. The user is asked to allow every key press.', {
+  key: { type: 'string', description: 'A key or a shortcut joined by +, starting with Ctrl, Shift, Alt or Win' },
+ }, ['key']),
 ];
 
 const BROWSER_FREE = new Set(['browser_snapshot', 'browser_screenshot', 'browser_read', 'browser_wait', 'browser_scroll']);
@@ -758,6 +780,8 @@ function attachedFile(attached, cwd, path) {
 const pictureList = args => (Array.isArray(args?.pictures) ? args.pictures : []).filter(item => item && typeof item === 'object');
 
 function needsApproval(name, args, { mode, cwd, attached = [], apart = null }) {
+ // What clicks and types on the computer is always the user's decision: no mode makes it silent.
+ if (AUTOMATION_INPUT.has(name)) return true;
  if (mode === 'full') return false;
  const ask = mode !== 'auto';
  if (name.startsWith('browser_')) return browserApproval(name, args, ask, apart);
@@ -774,6 +798,8 @@ function needsApproval(name, args, { mode, cwd, attached = [], apart = null }) {
   case 'web_search':
   case 'find_media':
   case 'fetch_url': return ask;
+  // Looking at the screen without touching it is a read: asked about where reads are, free in auto and full.
+  case 'take_screenshot': return ask;
   // What the agent sees in the browser is shown freely; a picture fetched from the internet or read from a file
   // outside the project is asked about as fetch_url and read_file are.
   case 'show_pictures': return ask && pictureList(args).some(item => item.url || (item.path && !inside(cwd, item.path)));
@@ -828,6 +854,16 @@ function describe(name, args, cwd, apart = null) {
   case 'browser_type': return { kind: 'web', title: I18n.t('approve.type'), effect: 'online', places: [], quote: `“${String(args.text ?? '')}”${refs[args.ref] ? ` into ${refs[args.ref]}` : ''}${args.submit ? ', then Enter' : ''}` };
   case 'browser_select': return { kind: 'web', title: I18n.t('approve.choose'), effect: 'online', places: [], quote: `“${String(args.option ?? '')}” in ${refs[args.ref] || `[${args.ref}]`}` };
   case 'browser_press': return { kind: 'web', title: I18n.t('approve.press'), effect: 'online', places: [], quote: String(args.key || '') };
+  case 'take_screenshot': return { kind: 'screen', title: I18n.t('approve.screenshot'), effect: 'read', badge: true, places: [] };
+  case 'move_mouse': return { kind: 'screen', title: I18n.t('approve.moveMouse'), effect: 'input', badge: true, places: [], quote: `x ${Math.round(Number(args.x))}, y ${Math.round(Number(args.y))}` };
+  case 'left_click': return { kind: 'screen', title: I18n.t('approve.leftClick'), effect: 'input', badge: true, places: [] };
+  case 'right_click': return { kind: 'screen', title: I18n.t('approve.rightClick'), effect: 'input', badge: true, places: [] };
+  case 'type_text': {
+   // The card shows what will be typed, so the user allows the words themselves; a long text is cut short there.
+   const text = String(args.text ?? '').replace(/\s+/g, ' ').trim();
+   return { kind: 'screen', title: I18n.t('approve.typeText'), effect: 'input', badge: true, places: [], quote: text.length > 120 ? `“${text.slice(0, 120)}…”` : `“${text}”` };
+  }
+  case 'press_key': return { kind: 'screen', title: I18n.t('approve.pressKey'), effect: 'input', badge: true, places: [], quote: String(args.key || '') };
   default: return { kind: 'command', title: name, effect: 'run', places: [], code: JSON.stringify(args), reveal: 'command' };
  }
 }
@@ -1056,6 +1092,18 @@ function format(name, args, result) {
   case 'list_files': return `${result.path}\n${result.text || '(empty folder)'}${result.more ? '\n[More entries not shown. List a subfolder.]' : ''}`;
   case 'video_frames': return frames(result);
   case 'pdf_pages': return pages(result);
+  case 'take_screenshot': {
+   const scale = result.screen.width / result.width;
+   return {
+    text: `The screen is ${result.screen.width}×${result.screen.height} screen pixels. The picture follows as ${result.width}×${result.height}${scale > 1.001 ? `, scaled down by ${scale.toFixed(3)}` : ''}. Mouse coordinates are screen pixels.`,
+    images: [{ label: 'The screen', url: result.image }],
+   };
+  }
+  case 'move_mouse': return `The mouse is at ${result.x}, ${result.y}.`;
+  case 'left_click': return 'Left-clicked where the pointer is.';
+  case 'right_click': return 'Right-clicked where the pointer is.';
+  case 'type_text': return `Typed ${result.chars} characters into the focused app.`;
+  case 'press_key': return `Pressed ${result.key}.`;
   default: return JSON.stringify(result);
  }
 }
@@ -1105,13 +1153,22 @@ async function browser(name, args, id, cwd, apart) {
 
 let env = null;
 
-window.AgentTools = {
+ window.AgentTools = {
  runs,
  available: !!bridge,
- // The quick chat's window has no built-in browser, so its agent is given no tools for one.
- schemas: window.openghost?.quick ? SCHEMAS.filter(tool => !tool.function.name.startsWith('browser_')) : SCHEMAS,
+ // The quick chat's window has no built-in browser, so its agent is given no tools for one. Desktop automation is
+ // offered only once the user has turned it on in Settings → General, and never in the quick chat.
+ get schemas() {
+  const quick = !!window.openghost?.quick, on = automationOn();
+  return SCHEMAS.filter(tool => {
+   const name = tool.function.name;
+   if (!AUTOMATION.has(name)) return !(quick && name.startsWith('browser_'));
+   return on && !quick;
+  });
+ },
  modes: MODES,
  needsApproval,
+ needsTicket: name => AUTOMATION_INPUT.has(name),
  describe,
  inside,
  environment() {
@@ -1136,14 +1193,21 @@ window.AgentTools = {
   glimpse: request => window.openghost?.proof ? window.openghost.proof.glimpse(request).catch(error => ({ ok: false, error: error.message })) : Promise.resolve({ ok: false, error: 'not in the app' }),
  },
  ports: () => bridge?.ports ? bridge.ports().catch(() => []) : Promise.resolve([]),
- // `apart`: the agent works in a browser tab of its own (a mini chat's).
- async run(name, args, { id, cwd, apart = null }) {
+ // `apart`: the agent works in a browser tab of its own (a mini chat's). `ticket`: the one-use permission the main
+ // process issued after the user allowed an input action on its card.
+ async run(name, args, { id, cwd, apart = null, ticket = '' }) {
   if (!bridge) return 'Error: tools are only available in the desktop app';
+  if (AUTOMATION.has(name) && !automationOn()) return 'Error: Desktop automation is turned off in Settings → General.';
   if (name.startsWith('browser_')) return browser(name, args, id, cwd, apart);
   if (name === 'web_search') return search(args.query, id, cwd);
   if (name === 'find_media') return media(args, id, cwd);
-  const result = await bridge.run(id, name, args, cwd);
+  const result = await bridge.run(id, name, args, cwd, AUTOMATION_INPUT.has(name) ? ticket : undefined);
   return name === 'fetch_url' ? page(result, args.start) : format(name, args, result);
+ },
+ // The permission for one input action, asked for only after the user has allowed it on its card (chat.js).
+ authorize(name, args) {
+  if (!bridge?.authorize) return Promise.resolve({ error: 'Desktop automation is not available in the desktop app' });
+  return bridge.authorize(name, args).catch(error => ({ error: error.message }));
  },
  cancel(id) {
   bridge?.cancel(id);

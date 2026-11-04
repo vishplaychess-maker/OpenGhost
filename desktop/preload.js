@@ -82,6 +82,48 @@ contextBridge.exposeInMainWorld('openghost', {
    set: next => ipcRenderer.invoke('awake:set', next),
   },
  },
+ // The Telegram bot (desktop/telegram.js keeps it): its settings, which the settings page shows and changes; a message
+ // from an allowed user, to be answered by the agent in its Telegram chat; the reply, or why there is none; and that
+ // this page is ready to take messages. `onChange` says how the bot stands: running, its name, or what went wrong.
+ telegram: {
+  get: () => ipcRenderer.invoke('telegram:get'),
+  set: changes => ipcRenderer.invoke('telegram:set', changes),
+  onAsk: callback => ipcRenderer.on('telegram:ask', (event, request) => callback(request)),
+  answer: (id, text, failure = '') => ipcRenderer.send('telegram:answer', id, text, failure),
+  ready: () => ipcRenderer.send('telegram:ready'),
+  onChange: callback => ipcRenderer.on('telegram:changed', (event, state) => callback(state)),
+ },
+ // The WhatsApp account (desktop/whatsapp.js keeps it): which numbers may be answered, auto-reply on or off, the QR
+ // code to scan while linking, the state of the connection; a message from an allowed number, to be answered by the
+ // agent in its WhatsApp chat; the reply, or why there is none; and that this page is ready to take messages.
+ whatsapp: {
+  get: () => ipcRenderer.invoke('whatsapp:get'),
+  set: changes => ipcRenderer.invoke('whatsapp:set', changes),
+  getQrCode: () => ipcRenderer.invoke('whatsapp:qr'),
+  onAsk: callback => ipcRenderer.on('whatsapp:ask', (event, request) => callback(request)),
+  answer: (id, text, failure = '') => ipcRenderer.send('whatsapp:answer', id, text, failure),
+  ready: () => ipcRenderer.send('whatsapp:ready'),
+  onChange: callback => ipcRenderer.on('whatsapp:changed', (event, state) => callback(state)),
+ },
+ // Mobile remote access (desktop/mobile-companion.js listens; desktop/mobile-bridge.js speaks to this page): how the
+ // server stands and what it is set to, a pairing offer and the QR code drawn from it, the answer to a phone standing
+ // at the door, a phone let go or revoked, the link put on the clipboard; a message from a paired phone, to be
+ // answered by the agent in that device's chat; the reply, or why there is none; and that this page is ready.
+ mobile: {
+  get: () => ipcRenderer.invoke('mobile:get'),
+  set: changes => ipcRenderer.invoke('mobile:set', changes),
+  pair: () => ipcRenderer.invoke('mobile:pair'),
+  unpair: () => ipcRenderer.invoke('mobile:unpair'),
+  refresh: () => ipcRenderer.invoke('mobile:refresh'),
+  approve: (id, yes) => ipcRenderer.invoke('mobile:approve', id, yes),
+  disconnect: id => ipcRenderer.invoke('mobile:disconnect', id),
+  revoke: id => ipcRenderer.invoke('mobile:revoke', id),
+  copy: text => ipcRenderer.invoke('mobile:copy', text),
+  onAsk: callback => ipcRenderer.on('mobile:ask', (event, request) => callback(request)),
+  answer: (id, text, failure = '') => ipcRenderer.send('mobile:answer', id, text, failure),
+  ready: () => ipcRenderer.send('mobile:ready'),
+  onChange: callback => ipcRenderer.on('mobile:changed', (event, state) => callback(state)),
+ },
  // Skills (desktop/skills.js): those a chat in a folder can use, the instructions of one; one fetched from a link to be
  // shown to the user, then put in or let go; and that they changed.
  skills: {
@@ -97,6 +139,9 @@ contextBridge.exposeInMainWorld('openghost', {
  terminalAt: target => ipcRenderer.invoke('path:terminal', target),
  // Where chats started without a project folder keep their own folders, and letting go of one that stayed empty.
  chatsFolder: () => ipcRenderer.invoke('folder:chats'),
+ // Pointing it at another folder, and being told when it has been pointed somewhere (another window, or this one).
+ setChatsFolder: folder => ipcRenderer.invoke('folder:chats:set', folder),
+ onChatsFolder: callback => ipcRenderer.on('folder:chats', (event, folder) => callback(folder)),
  releaseFolder: folder => ipcRenderer.invoke('folder:release', folder),
  setTitleBar: (color, symbols) => ipcRenderer.send('window:titlebar', color, symbols),
  setTheme: choice => ipcRenderer.invoke('theme:set', choice),
@@ -143,7 +188,8 @@ contextBridge.exposeInMainWorld('openghost', {
  // Cut, copy, paste or select all, done by the window where its keyboard is (the menu of a right click).
  edit: action => ipcRenderer.invoke('edit:do', action),
  tools: {
-  run: (id, name, args, cwd) => ipcRenderer.invoke('tool:run', id, name, args, cwd),
+  run: (id, name, args, cwd, ticket) => ipcRenderer.invoke('tool:run', id, name, args, cwd, ticket),
+  authorize: (name, args) => ipcRenderer.invoke('tool:authorize', name, args),
   cancel: id => ipcRenderer.invoke('tool:cancel', id),
   environment: () => ipcRenderer.invoke('tool:environment'),
   guide: folder => ipcRenderer.invoke('tool:guide', folder),
@@ -175,10 +221,12 @@ contextBridge.exposeInMainWorld('openghost', {
   write: (provider, key) => ipcRenderer.invoke('keys:write', provider, key),
  },
  auth: {
-  login: () => ipcRenderer.invoke('auth:login'),
-  cancel: () => ipcRenderer.invoke('auth:cancel'),
-  logout: () => ipcRenderer.invoke('auth:logout'),
-  status: () => ipcRenderer.invoke('auth:status'),
-  limits: () => ipcRenderer.invoke('auth:limits'),
+  login: (provider = 'chatgpt') => ipcRenderer.invoke('auth:login', provider),
+  cancel: (provider = 'chatgpt') => ipcRenderer.invoke('auth:cancel', provider),
+  logout: (provider = 'chatgpt') => ipcRenderer.invoke('auth:logout', provider),
+  status: (provider = 'chatgpt') => ipcRenderer.invoke('auth:status', provider),
+  limits: (provider = 'chatgpt') => ipcRenderer.invoke('auth:limits', provider),
+  // What a device-code sign-in wants shown while the browser holds the page: the code and where it is entered.
+  onDevice: callback => ipcRenderer.on('auth:device', (event, data) => callback(data)),
  },
 });

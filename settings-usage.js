@@ -6,8 +6,8 @@
 // limits as ChatGPT counts them, for DeepSeek the balance on the account, for OpenRouter what its key has spent or has
 // left, and for each the tokens, the cache and the models.
 const PERIODS = [['today', 1], ['week', 7], ['month', 30], ['all', 0]];
-const ORDER = ['chatgpt', 'openai', 'anthropic', 'deepseek', 'openrouter', 'local', 'custom'];
-const TONES = { chatgpt: 'turquoise', openai: 'lilac', anthropic: 'orange', deepseek: 'blue', openrouter: 'pink', local: 'green', custom: 'yellow' };
+const ORDER = ['chatgpt', 'openai', 'grok', 'anthropic', 'deepseek', 'openrouter', 'nvidia', 'gemini', 'venice', 'local', 'custom'];
+const TONES = { chatgpt: 'turquoise', openai: 'lilac', grok: 'steel', anthropic: 'orange', deepseek: 'blue', openrouter: 'pink', nvidia: 'lime', gemini: 'gemini', venice: 'venice', local: 'green', custom: 'yellow' };
 const PLANS = {
  free: 'Free', go: 'Go', plus: 'Plus', prolite: 'Pro 5x', pro: 'Pro 20x', team: 'Team', business: 'Business',
  self_serve_business_usage_based: 'Business', enterprise: 'Enterprise', enterprise_cbp_usage_based: 'Enterprise', edu: 'Edu',
@@ -168,7 +168,7 @@ class UsageSettings {
  }
 
  connected(provider) {
-  return provider === 'chatgpt' ? !!this.settings.account.connected : this.settings.connected(provider);
+  return this.settings.connected(provider);
  }
 
  refresh() {
@@ -178,7 +178,7 @@ class UsageSettings {
 
  async loadLimits() {
   const auth = window.openghost?.auth;
-  if (!auth?.limits || !this.settings.account.connected) {
+  if (!auth?.limits || !this.settings.connected('chatgpt')) {
    this.limits = { state: 'idle', data: null };
    return;
   }

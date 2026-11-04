@@ -57,6 +57,8 @@ new AboutSettings(document.querySelector('#settings-about'));
 new UsageSettings({ root: document.querySelector('#settings-usage'), settings, dialog: settings.dialog });
 // Usage at a glance: the button beside Settings in the sidebar grows into a small panel.
 new UsagePeek({ button: document.querySelector('.sidebar-usage'), settings });
+// Phone access: the button at the end of the row opens the window whose code a phone reads.
+new MobileAccess({ button: document.querySelector('.sidebar-mobile') });
 const settingsScrollbar = new Scrollbar(document.querySelector('.settings-page'), document.querySelector('.settings-scrollbar'));
 for (const panel of document.querySelectorAll('.settings-panel')) settingsScrollbar.observe(panel);
 // The chat's own buttons (the capsule at the top, the notes, the browser, down to the end, the folder) are clear glass

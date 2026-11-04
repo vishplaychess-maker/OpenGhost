@@ -1,0 +1,101 @@
+/* OpenGhost on a phone: the page a QR code leads to. Plain on purpose — what matters on a small screen is what was
+   said and what is being said about it. */
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+:root {
+ --ink: #ecebe8;
+ --ink-soft: #9d9c98;
+ --line: rgba(255, 255, 255, .1);
+ --pane: rgba(255, 255, 255, .05);
+ --talk: #3f8f6f;
+ --phone: #2c2e33;
+ --bad: #d06a5f;
+ --good: #58b08a;
+ --wait: #d3a75b;
+}
+
+html, body { height: 100%; }
+
+body {
+ margin: 0;
+ padding: 0 14px 14px;
+ display: flex;
+ flex-direction: column;
+ gap: 10px;
+ color: var(--ink);
+ background: #17181b;
+ font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.top {
+ display: flex;
+ align-items: center;
+ gap: 10px;
+ padding: 12px 2px 10px;
+ border-bottom: 1px solid var(--line);
+}
+
+.mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--pane); color: var(--talk); }
+.mark svg { width: 18px; height: 18px; }
+.who { display: flex; flex-direction: column; margin-right: auto; }
+.name { font-size: 14px; font-weight: 600; letter-spacing: .01em; }
+.state { font-size: 12px; color: var(--ink-soft); }
+.state[data-tone="good"] { color: var(--good); }
+.state[data-tone="wait"] { color: var(--wait); }
+.state[data-tone="bad"] { color: var(--bad); }
+
+button {
+ font: inherit;
+ color: inherit;
+ border: 1px solid var(--line);
+ border-radius: 10px;
+ background: var(--pane);
+ padding: 9px 14px;
+ cursor: pointer;
+}
+
+button:active { transform: translateY(1px); }
+.ghost { font-size: 13px; padding: 7px 11px; color: var(--ink-soft); }
+.solid { background: var(--talk); border-color: transparent; color: #0e1512; font-weight: 600; }
+.quiet { border: 0; background: none; color: var(--ink-soft); font-size: 12px; padding: 6px 0; text-decoration: underline; }
+
+.talk { flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-top: 10px; }
+.hint { margin: auto 0; max-width: 320px; color: var(--ink-soft); font-size: 13px; text-align: center; }
+.rows { display: flex; flex-direction: column; gap: 8px; }
+
+.row { max-width: 86%; padding: 9px 12px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.you { align-self: flex-end; background: var(--talk); color: #0e1512; border-bottom-right-radius: 5px; }
+.it { align-self: flex-start; background: var(--phone); border-bottom-left-radius: 5px; }
+.said { align-self: center; background: none; color: var(--ink-soft); font-size: 12px; text-align: center; }
+.it img { display: block; max-width: 100%; border-radius: 9px; }
+
+.notice { margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--pane); color: var(--wait); font-size: 12px; }
+
+.send { display: flex; gap: 8px; }
+.send input {
+ flex: 1 1 auto;
+ min-width: 0;
+ font: inherit;
+ color: inherit;
+ padding: 11px 14px;
+ border: 1px solid var(--line);
+ border-radius: 12px;
+ background: var(--phone);
+}
+
+.send button { display: grid; place-items: center; width: 44px; padding: 0; background: var(--talk); border-color: transparent; color: #0e1512; }
+.send button svg { width: 20px; height: 20px; }
+.send button:disabled { opacity: .4; }
+
+.pair { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--pane); text-align: center; }
+.pair-words { margin: 0 0 12px; font-size: 13px; color: var(--ink-soft); }
+.foot { margin: 0; text-align: center; }
+
+@media (prefers-color-scheme: light) {
+ body { background: #f4f3f1; color: #1d1f24; }
+ .it { background: #e6e5e1; }
+ .mark, .notice, .pair { background: rgba(0, 0, 0, .04); }
+ .notice { border-color: rgba(0, 0, 0, .1); }
+ .pair { border-color: rgba(0, 0, 0, .1); }
+}

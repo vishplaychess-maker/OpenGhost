@@ -1,10 +1,12 @@
 (() => {
 'use strict';
 
-const STORAGE = { effort: 'deepseek.effort', mode: 'openghost.mode', model: 'openghost.model', catalog: 'openghost.catalog' };
-const KEYS = { openai: 'openai.apiKey', anthropic: 'anthropic.apiKey', deepseek: 'deepseek.apiKey', openrouter: 'openrouter.apiKey', local: 'local.address', custom: 'custom.apiKey' };
+const STORAGE = { effort: 'deepseek.effort', mode: 'openghost.mode', model: 'openghost.model', catalog: 'openghost.catalog', free: 'openghost.freeOnly' };
+const KEYS = { openai: 'openai.apiKey', anthropic: 'anthropic.apiKey', deepseek: 'deepseek.apiKey', openrouter: 'openrouter.apiKey', nvidia: 'nvidia.apiKey', gemini: 'gemini.apiKey', venice: 'venice.apiKey', iteracompute: 'iteracompute.apiKey', zro: 'zro.apiKey', infron: 'infron.apiKey', tokenharbor: 'tokenharbor.apiKey', yeta: 'yeta.apiKey', local: 'local.address', custom: 'custom.apiKey' };
 // The order providers appear in, in the settings and in the model picker.
-const ORDER = ['chatgpt', 'openai', 'anthropic', 'deepseek', 'openrouter', 'local', 'custom'];
+const ORDER = ['chatgpt', 'openai', 'grok', 'iteracompute', 'zro', 'infron', 'tokenharbor', 'yeta', 'anthropic', 'deepseek', 'openrouter', 'nvidia', 'gemini', 'venice', 'local', 'custom'];
+// The providers a plan pays for: reached by signing in, with no key and no field to type one into.
+const ACCOUNTS = ['chatgpt', 'grok'];
 // The provider the app starts with: the settings ask for its key when nothing is connected, and new chats take its first
 // model until the user picks another.
 const FIRST_PROVIDER = 'deepseek';
@@ -18,6 +20,14 @@ const LINKS = {
  anthropic: ['https://console.anthropic.com/settings/keys', 'console.anthropic.com'],
  deepseek: ['https://platform.deepseek.com/api_keys', 'platform.deepseek.com'],
  openrouter: ['https://openrouter.ai/keys', 'openrouter.ai'],
+ nvidia: ['https://build.nvidia.com/explore/discover', 'build.nvidia.com'],
+ gemini: ['https://aistudio.google.com/app/apikey', 'aistudio.google.com'],
+ venice: ['https://venice.ai/settings/api', 'venice.ai'],
+ iteracompute: ['https://iteracompute.com/free/', 'iteracompute.com'],
+ zro: ['https://zro.moonmath.ai/', 'zro.moonmath.ai'],
+ infron: ['https://infron.ai/', 'infron.ai'],
+ tokenharbor: ['https://tokenharbor.ai/', 'tokenharbor.ai'],
+ yeta: ['https://platform.yeta.ai/', 'platform.yeta.ai'],
 };
 // What the user may write in by hand where a provider's own word is not enough. `models`: names of models its list
 // does not hold. `context`: the size of the window, for the providers whose servers may not tell it. `address`: where a
@@ -25,6 +35,14 @@ const LINKS = {
 const HAND = {
  openai: { models: 'openai.models' },
  anthropic: { models: 'anthropic.models' },
+ nvidia: { models: 'nvidia.models' },
+ gemini: { models: 'gemini.models' },
+ venice: { models: 'venice.models' },
+ iteracompute: { models: 'iteracompute.models' },
+ zro: { models: 'zro.models' },
+ infron: { models: 'infron.models' },
+ tokenharbor: { models: 'tokenharbor.models' },
+ yeta: { models: 'yeta.models' },
  local: { models: 'local.models', context: 'local.context' },
  custom: { models: 'custom.models', context: 'custom.context', address: 'custom.address' },
 };
@@ -33,7 +51,7 @@ const HAND = {
 const LOCAL = { window: 32768, presets: [['Ollama', 'http://localhost:11434'], ['LM Studio', 'http://localhost:1234']] };
 // The providers reached by an address the user gives.
 const SERVED = new Set(['local', 'custom']);
-const PLACEHOLDERS = { anthropic: 'sk-ant-…', openrouter: 'sk-or-…' };
+const PLACEHOLDERS = { anthropic: 'sk-ant-…', openrouter: 'sk-or-…', nvidia: 'nvapi-…', gemini: 'AIza…', venice: 'vapi_…', tokenharbor: 'thk_live_…' };
 const MODES = ['ask', 'auto', 'full'];
 const DEFAULT_MODE = 'ask';
 const CHECK_DELAY = 400;
@@ -115,21 +133,143 @@ function customRows() {
   </div>${handRow('custom', 'models', 'model-id')}${handRow('custom', 'context', String(LOCAL.window))}`;
 }
 
-function accountRow() {
+// The Telegram bot (desktop/telegram.js keeps it): the token BotFather gives, the user ids it may answer, and the switch
+// that lets it run. Its status line says whether it is on the air and under which name.
+function telegramRows() {
+ const t = name => escapeHtml(I18n.t(`settings.telegram.${name}`));
  return `
   <div class="settings-row">
    <div class="settings-text">
-    <span class="settings-label">${escapeHtml(I18n.t('settings.chatgpt.label'))}</span>
-    <p class="settings-hint">${escapeHtml(I18n.t('settings.chatgpt.hint'))}</p>
+    <label class="settings-label" for="settings-telegram-token">${t('token')}</label>
+    <p class="settings-hint"><span>${t('token.hint')}</span> <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer">t.me/BotFather</a></p>
    </div>
-   <div class="settings-control settings-account">
+   <div class="settings-control">
+    <div class="settings-key-box">
+     <input id="settings-telegram-token" class="settings-key settings-field" data-telegram="token" type="password" placeholder="123456789:AA…" autocomplete="off" spellcheck="false">
+     <button type="button" class="settings-key-eye" aria-label="${escapeHtml(I18n.t('settings.key.show'))}" aria-pressed="false">${Glyphs.eye}</button>
+    </div>
+   </div>
+  </div>
+  <div class="settings-row">
+   <div class="settings-text">
+    <label class="settings-label" for="settings-telegram-allowed">${t('allowed')}</label>
+    <p class="settings-hint">${t('allowed.hint')}</p>
+   </div>
+   <div class="settings-control">
+    <input id="settings-telegram-allowed" class="settings-key settings-field" data-telegram="allowed" type="text" placeholder="123456789, 987654321" autocomplete="off" spellcheck="false">
+   </div>
+  </div>
+  <div class="settings-row">
+   <div class="settings-text">
+    <span class="settings-label" id="settings-telegram-enabled-label">${t('enabled')}</span>
+    <p class="settings-hint">${t('enabled.hint')}</p>
+   </div>
+   <div class="settings-control">
+    <button type="button" id="settings-telegram-enabled" class="memory-switch telegram-switch" role="switch" aria-checked="false" aria-labelledby="settings-telegram-enabled-label"><span class="memory-switch-knob"></span></button>
+    <p class="settings-status" data-telegram-status role="status"></p>
+   </div>
+  </div>`;
+}
+
+// The WhatsApp account (desktop/whatsapp.js keeps it): the numbers it may answer, the switch that lets it run, and the
+// QR code to scan while linking. Its status line says whether it is connected, waiting for a scan, or reconnecting.
+function whatsappRows() {
+ const t = name => escapeHtml(I18n.t(`settings.whatsapp.${name}`));
+ return `
+  <div class="settings-row">
+   <div class="settings-text">
+    <span class="settings-label">${t('qr')}</span>
+    <p class="settings-hint">${t('qr.hint')}</p>
+   </div>
+   <div class="settings-control settings-whatsapp-qr">
+    <img class="whatsapp-qr" data-whatsapp-qr alt="${t('qr')}" hidden>
+    <p class="settings-status" data-whatsapp-qr-status role="status"></p>
+   </div>
+  </div>
+  <div class="settings-row">
+   <div class="settings-text">
+    <label class="settings-label" for="settings-whatsapp-allowed">${t('allowed')}</label>
+    <p class="settings-hint">${t('allowed.hint')}</p>
+   </div>
+   <div class="settings-control">
+    <input id="settings-whatsapp-allowed" class="settings-key settings-field" data-whatsapp="allowed" type="text" placeholder="919876543210, 447700900123" autocomplete="off" spellcheck="false">
+   </div>
+  </div>
+  <div class="settings-row">
+   <div class="settings-text">
+    <span class="settings-label" id="settings-whatsapp-enabled-label">${t('enabled')}</span>
+    <p class="settings-hint">${t('enabled.hint')}</p>
+   </div>
+   <div class="settings-control">
+    <button type="button" id="settings-whatsapp-enabled" class="memory-switch whatsapp-switch" role="switch" aria-checked="false" aria-labelledby="settings-whatsapp-enabled-label"><span class="memory-switch-knob"></span></button>
+    <p class="settings-status" data-whatsapp-status role="status"></p>
+   </div>
+  </div>`;
+}
+
+// Phone access (desktop/mobile-companion.js keeps the server): the switch that lets a phone in, the address it opens,
+// whether a phone on the Wi-Fi may reach it, whether it may see the screen, the port, and the phones already paired.
+function mobileRows() {
+ const t = name => escapeHtml(I18n.t(`settings.mobile.${name}`));
+ const switchRow = (name, hint) => `
+  <div class="settings-row">
+   <div class="settings-text">
+    <span class="settings-label" id="settings-mobile-${name}-label">${t(name)}</span>
+    <p class="settings-hint">${hint}</p>
+   </div>
+   <div class="settings-control">
+    <button type="button" id="settings-mobile-${name}" class="memory-switch mobile-switch" role="switch" data-mobile="${name}" aria-checked="false" aria-labelledby="settings-mobile-${name}-label"><span class="memory-switch-knob"></span></button>
+   </div>
+  </div>`;
+ return `
+  ${switchRow('enabled', t('enabled.hint'))}
+  <div class="settings-row">
+   <div class="settings-text">
+    <span class="settings-label">${t('address')}</span>
+    <p class="settings-hint">${t('qr.hint')}</p>
+   </div>
+   <div class="settings-control settings-mobile-control">
+    <code class="settings-mobile-url" data-mobile-url></code>
+    <button type="button" class="settings-button" data-mobile-pair>${t('qr')}</button>
+    <p class="settings-status" data-mobile-status role="status"></p>
+   </div>
+  </div>
+  ${switchRow('lan', t('lan.hint'))}
+  ${switchRow('screens', t('screens.hint'))}
+  <div class="settings-row">
+   <div class="settings-text">
+    <label class="settings-label" for="settings-mobile-port">${t('port')}</label>
+    <p class="settings-hint">${t('port.hint')}</p>
+   </div>
+   <div class="settings-control">
+    <input id="settings-mobile-port" class="settings-key settings-field" data-mobile="port" type="text" placeholder="${t('port.auto')}" autocomplete="off" spellcheck="false" inputmode="numeric">
+   </div>
+  </div>
+  <div class="settings-row">
+   <div class="settings-text">
+    <span class="settings-label">${t('devices')}</span>
+    <p class="settings-hint">${t('revokeAll.hint')}</p>
+   </div>
+   <div class="settings-control settings-mobile-control">
+    <ul class="mobile-devices" data-mobile-devices></ul>
+    <button type="button" class="settings-button" data-mobile-revoke-all>${t('revokeAll')}</button>
+   </div>
+  </div>`;
+}
+
+function accountRow(provider) { return `  <div class="settings-row">
+   <div class="settings-text">
+    <span class="settings-label">${escapeHtml(I18n.t(`settings.${provider}.label`))}</span>
+    <p class="settings-hint">${escapeHtml(I18n.t(`settings.${provider}.hint`))}</p>
+   </div>
+   <div class="settings-control settings-account" data-account="${provider}">
     <div class="settings-account-row">
      <span class="settings-account-who"></span>
-     <button type="button" class="settings-button is-primary" data-action="login">${escapeHtml(I18n.t('settings.chatgpt.login'))}</button>
-     <button type="button" class="settings-button" data-action="cancel">${escapeHtml(I18n.t('settings.chatgpt.cancel'))}</button>
-     <button type="button" class="settings-button" data-action="logout">${escapeHtml(I18n.t('settings.chatgpt.logout'))}</button>
+     <button type="button" class="settings-button is-primary" data-action="login">${escapeHtml(I18n.t(`settings.${provider}.login`))}</button>
+     <button type="button" class="settings-button" data-action="cancel">${escapeHtml(I18n.t(`settings.${provider}.cancel`))}</button>
+     <button type="button" class="settings-button" data-action="logout">${escapeHtml(I18n.t(`settings.${provider}.logout`))}</button>
     </div>
-    <p class="settings-status" data-provider="chatgpt" role="status"></p>
+    <p class="settings-status" data-provider="${provider}" role="status"></p>
    </div>
   </div>`;
 }
@@ -153,7 +293,18 @@ class Settings {
   this.unsaved = new Set();
   this.keys = this.readKeys();
   this.hand = this.readHand();
-  this.account = { connected: false };
+  this.accounts = Object.fromEntries(ACCOUNTS.map(provider => [provider, { connected: false }]));
+  // The Telegram bot's settings, as the main process has them (desktop/telegram.js).
+  this.telegramBridge = window.openghost?.telegram || null;
+  this.telegram = { enabled: false, allowed: [], token: '', running: false, me: '', error: '', refused: '' };
+  // The WhatsApp account's settings and connection (desktop/whatsapp.js).
+  this.whatsappBridge = window.openghost?.whatsapp || null;
+  this.whatsapp = { enabled: false, allowed: [], status: 'off', me: '', error: '', refused: '', qr: '' };
+  // Phone access (desktop/mobile-companion.js): whether it listens, from where, and which phones it has let in.
+  this.mobileBridge = window.openghost?.mobile || null;
+  this.mobile = { enabled: false, lan: false, screens: false, port: 'auto', running: false, url: '', error: '', refused: '', devices: [] };
+  // What a device-code sign-in asked to have shown while the browser waits: the code and the page that takes it.
+  this.devices = {};
   this.catalog = this.readCatalog();
   this.models = [];
   this.efforts = EFFORTS.slice();
@@ -165,6 +316,8 @@ class Settings {
   this.effort = typeof effort === 'string' && effort ? effort : DEFAULT_EFFORT;
   const mode = localStorage.getItem(STORAGE.mode);
   this.mode = MODES.includes(mode) ? mode : DEFAULT_MODE;
+  // Whether the picker shows only the models that cost nothing. A way of looking, kept between starts.
+  this.freeOnly = localStorage.getItem(STORAGE.free) === 'on';
   this.checks = {};
   this.checked = new Set();
   // Keys saved in an earlier session count as working until a check says otherwise.
@@ -180,6 +333,12 @@ class Settings {
   });
   // A provider that found out something about one of its models asks for its list to be read again.
   window.addEventListener('models-stale', event => { if (this.connected(event.detail)) this.refresh(event.detail).catch(() => {}); });
+  // A device-code sign-in tells the page which code to type while the browser has the sign-in open.
+  window.openghost?.auth?.onDevice?.(info => {
+   if (!info?.provider) return;
+   this.devices[info.provider] = info;
+   this.paint();
+  });
   this.refreshAll();
  }
 
@@ -348,12 +507,12 @@ class Settings {
  }
 
  connected(provider) {
-  return provider === 'chatgpt' ? !!this.account.connected : this.has(provider);
+  return ACCOUNTS.includes(provider) ? !!this.accounts[provider]?.connected : this.has(provider);
  }
 
  // The badge turns green only once the provider has taken the key, so a mistyped key never looks connected.
  working(provider) {
-  return this.connected(provider) && (provider === 'chatgpt' || this.accepted.has(provider));
+  return this.connected(provider) && (ACCOUNTS.includes(provider) || this.accepted.has(provider));
  }
 
  // The picker offers the models of every connected provider, as each provider lists them. No model is known to the app
@@ -448,6 +607,13 @@ class Settings {
   localStorage.setItem(STORAGE.mode, value);
  }
 
+ // The picker's way of looking: only the models that cost nothing, or all of them. It changes nothing about the chat,
+ // which keeps its model whichever of the two the list is showing.
+ setFreeOnly(on) {
+  this.freeOnly = !!on;
+  try { localStorage.setItem(STORAGE.free, this.freeOnly ? 'on' : 'off'); } catch {}
+ }
+
  changed() {
   this.collect();
   this.applyEfforts();
@@ -468,16 +634,17 @@ class Settings {
   const effort = localStorage.getItem(STORAGE.effort), mode = localStorage.getItem(STORAGE.mode);
   if (effort) this.effort = effort;
   if (MODES.includes(mode)) this.mode = mode;
+  this.freeOnly = localStorage.getItem(STORAGE.free) === 'on';
   this.changed();
-  await this.syncAccount();
+  await this.syncAccounts();
  }
 
  async refreshAll() {
   this.read = Date.now();
-  await this.syncAccount();
+  await this.syncAccounts();
   await Promise.all([
    ...Object.keys(KEYS).filter(provider => this.has(provider)).map(provider => this.checkKey(provider)),
-   this.account.connected ? this.refresh('chatgpt').catch(() => {}) : null,
+   ...ACCOUNTS.filter(provider => this.accounts[provider].connected).map(provider => this.refresh(provider).catch(() => {})),
   ]);
  }
 
@@ -490,11 +657,15 @@ class Settings {
  }
 
  // A sign-in can lapse while the app runs, so the settings ask how it stands each time they open.
- async syncAccount() {
+ async syncAccounts() {
+  await Promise.all(ACCOUNTS.map(provider => this.syncAccount(provider)));
+ }
+
+ async syncAccount(provider) {
   const auth = window.openghost?.auth;
-  if (!auth || this.account.waiting) return;
-  const account = await auth.status().catch(() => null);
-  if (account && !this.account.waiting) this.setAccount(account);
+  if (!auth || this.accounts[provider].waiting) return;
+  const account = await auth.status(provider).catch(() => null);
+  if (account && !this.accounts[provider].waiting) this.setAccount(provider, account);
  }
 
  // Loads a provider's models into the catalog; the last request for a provider wins.
@@ -518,10 +689,22 @@ class Settings {
 
  build() {
   this.list.innerHTML = [
-   section('openai', 'OpenAI', accountRow() + keyRow('openai') + handRow('openai', 'models', 'gpt-…')),
+   section('openai', 'OpenAI', accountRow('chatgpt') + keyRow('openai') + handRow('openai', 'models', 'gpt-…')),
+   section('grok', 'Grok', accountRow('grok')),
+   section('iteracompute', 'IteraCompute', keyRow('iteracompute') + handRow('iteracompute', 'models', 'qwen/qwen3.8-27b')),
+   section('zro', 'Zro', keyRow('zro') + handRow('zro', 'models', 'deepseek-v4.1-flash')),
+   section('infron', 'Infron', keyRow('infron') + handRow('infron', 'models', 'qwen/qwen3.8-27b:free')),
+   section('tokenharbor', 'Token Harbor', keyRow('tokenharbor') + handRow('tokenharbor', 'models', 'openai/deepseek-v4.1-flash:free')),
+   section('yeta', 'Yeta', keyRow('yeta') + handRow('yeta', 'models', 'deepseek-v4.1-flash')),
    section('anthropic', 'Anthropic', keyRow('anthropic') + handRow('anthropic', 'models', 'claude-…')),
    section('deepseek', 'DeepSeek', keyRow('deepseek')),
    section('openrouter', 'OpenRouter', keyRow('openrouter')),
+   section('nvidia', 'NVIDIA', keyRow('nvidia') + handRow('nvidia', 'models', 'meta/llama3-70b-instruct')),
+   section('gemini', 'Gemini', keyRow('gemini') + handRow('gemini', 'models', 'gemini-2.5-flash')),
+   section('venice', 'Venice', keyRow('venice') + handRow('venice', 'models', 'venice-uncensored-1-2')),
+   section('telegram', 'Telegram', telegramRows()),
+   section('whatsapp', 'WhatsApp', whatsappRows()),
+   section('mobile', I18n.t('settings.mobile'), mobileRows()),
    section('local', I18n.t('settings.local.name'), localRows()),
    section('custom', I18n.t('settings.custom.name'), customRows()),
   ].join('');
@@ -549,20 +732,305 @@ class Settings {
    });
   }
   this.statuses = Object.fromEntries([...this.list.querySelectorAll('.settings-status')].map(node => [node.dataset.provider, node]));
-  this.accountBox = this.list.querySelector('.settings-account');
-  this.accountBox.addEventListener('click', event => {
-   const action = event.target.closest('[data-action]')?.dataset.action;
-   if (action === 'login') this.login();
-   else if (action === 'cancel') window.openghost?.auth?.cancel();
-   else if (action === 'logout') this.logout();
+  this.accountBoxes = {};
+  for (const box of this.list.querySelectorAll('.settings-account')) {
+   const provider = box.dataset.account;
+   this.accountBoxes[provider] = box;
+   box.addEventListener('click', event => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (action === 'login') this.login(provider);
+    else if (action === 'cancel') window.openghost?.auth?.cancel(provider);
+    else if (action === 'logout') this.logout(provider);
+   });
+   if (!window.openghost?.auth) box.closest('.settings-row').hidden = true;
+  }
+  this.wireTelegram();
+  this.wireWhatsApp();
+  this.wireMobile();
+ }
+
+ // The Telegram section: the token and the user ids are kept as they are typed, a moment after the last key; the switch
+ // at once. The main process starts or stops the bot and says how it stands, which the line under the switch shows.
+ wireTelegram() {
+  const box = this.telegramBox = this.list.querySelector('.provider[data-provider="telegram"]');
+  if (!box) return;
+  const bridge = this.telegramBridge;
+  if (!bridge) { box.hidden = true; return; }
+  this.telegramToken = box.querySelector('[data-telegram="token"]');
+  this.telegramAllowed = box.querySelector('[data-telegram="allowed"]');
+  this.telegramSwitch = box.querySelector('.telegram-switch');
+  this.telegramStatus = box.querySelector('[data-telegram-status]');
+  const eye = this.telegramToken.nextElementSibling;
+  eye?.addEventListener('click', () => {
+   const shown = this.telegramToken.type === 'password';
+   this.telegramToken.type = shown ? 'text' : 'password';
+   eye.setAttribute('aria-pressed', String(shown));
+   eye.setAttribute('aria-label', I18n.t(shown ? 'settings.key.hide' : 'settings.key.show'));
   });
-  if (!window.openghost?.auth) this.accountBox.closest('.settings-row').hidden = true;
+  const timers = {};
+  const save = (name, changes, after) => {
+   clearTimeout(timers[name]);
+   timers[name] = setTimeout(async () => {
+    const state = await bridge.set(changes).catch(() => null);
+    if (state) this.takeTelegram(state);
+   }, after);
+  };
+  this.telegramToken.addEventListener('input', () => save('token', { token: this.telegramToken.value }, CHECK_DELAY));
+  this.telegramAllowed.addEventListener('input', () => save('allowed', { allowed: this.telegramAllowed.value }, CHECK_DELAY));
+  this.telegramSwitch.addEventListener('click', () => save('enabled', { enabled: this.telegramSwitch.getAttribute('aria-checked') !== 'true' }, 0));
+  bridge.onChange?.(state => this.takeTelegram(state));
+  this.refreshTelegram();
+ }
+
+ async refreshTelegram() {
+  if (!this.telegramBridge) return;
+  const state = await this.telegramBridge.get().catch(() => null);
+  if (state) this.takeTelegram(state);
+ }
+
+ // What the main process says of the bot: its fields, the switch, and a line telling whether it is on the air, waiting
+ // for a token, or refusing one. Fields being typed into are left as they are.
+ takeTelegram(state) {
+  if (!state) return;
+  this.telegram = { ...this.telegram, ...state, refused: state.refused || '' };
+  if (!this.telegramBox) return;
+  if (this.telegramToken && document.activeElement !== this.telegramToken) this.telegramToken.value = state.token || '';
+  if (this.telegramAllowed && document.activeElement !== this.telegramAllowed) this.telegramAllowed.value = (state.allowed || []).join(', ');
+  this.telegramSwitch?.setAttribute('aria-checked', String(!!state.enabled));
+  const error = state.refused ? I18n.t(state.refused === 'token' ? 'settings.telegram.badToken' : 'settings.telegram.badAllowed') : state.error || '';
+  let status = error;
+  if (!status && !state.enabled) status = I18n.t('settings.telegram.off');
+  if (!status && !state.token) status = I18n.t('settings.telegram.needToken');
+  if (!status && !state.running) status = I18n.t('settings.telegram.starting');
+  if (!status && !state.allowed?.length) status = I18n.t('settings.telegram.needAllowed');
+  if (!status) status = I18n.t('settings.telegram.running', { who: state.me || 'Telegram' });
+  if (this.telegramStatus) {
+   this.telegramStatus.textContent = status;
+   this.telegramStatus.dataset.tone = error ? 'error' : '';
+  }
+  this.paintTelegram();
+ }
+
+ paintTelegram() {
+  const box = this.telegramBox;
+  if (!box) return;
+  const state = this.telegram;
+  const badge = box.querySelector('.provider-state');
+  if (badge) {
+   // An enabled bot that refused its token or could not reach Telegram is not starting: it is down.
+   const bad = !!state.enabled && !state.running && !!(state.error || state.refused);
+   badge.textContent = I18n.t(state.running ? 'settings.telegram.badgeRunning' : bad ? 'settings.telegram.badgeError' : 'settings.telegram.badgeStopped');
+   badge.classList.toggle('is-on', !!state.running);
+   badge.classList.toggle('is-bad', bad);
+  }
+  const models = box.querySelector('.provider-models');
+  if (models) models.textContent = '';
+ }
+
+ // The WhatsApp section: the numbers are kept as they are typed, a moment after the last key; the switch at once. The
+ // main process opens or closes the session and says how it stands; the QR code appears while linking.
+ wireWhatsApp() {
+  const box = this.whatsappBox = this.list.querySelector('.provider[data-provider="whatsapp"]');
+  if (!box) return;
+  const bridge = this.whatsappBridge;
+  if (!bridge) { box.hidden = true; return; }
+  this.whatsappAllowed = box.querySelector('[data-whatsapp="allowed"]');
+  this.whatsappSwitch = box.querySelector('.whatsapp-switch');
+  this.whatsappStatus = box.querySelector('[data-whatsapp-status]');
+  this.whatsappQr = box.querySelector('[data-whatsapp-qr]');
+  this.whatsappQrStatus = box.querySelector('[data-whatsapp-qr-status]');
+  let typing = null;
+  this.whatsappAllowed.addEventListener('input', () => {
+   clearTimeout(typing);
+   typing = setTimeout(async () => {
+    const state = await bridge.set({ allowed: this.whatsappAllowed.value }).catch(() => null);
+    if (state) this.takeWhatsApp(state);
+   }, CHECK_DELAY);
+  });
+  this.whatsappSwitch.addEventListener('click', async () => {
+   const next = this.whatsappSwitch.getAttribute('aria-checked') !== 'true';
+   const state = await bridge.set({ enabled: next }).catch(() => null);
+   if (state) this.takeWhatsApp(state);
+  });
+  bridge.onChange?.(state => this.takeWhatsApp(state));
+  this.refreshWhatsApp();
+ }
+
+ async refreshWhatsApp() {
+  if (!this.whatsappBridge) return;
+  const state = await this.whatsappBridge.get().catch(() => null);
+  if (!state) return;
+  this.takeWhatsApp(state);
+  if (state.status === 'qr' && !state.qr) {
+   const code = await this.whatsappBridge.getQrCode().catch(() => null);
+   if (code?.qr) this.takeWhatsApp({ ...state, qr: code.qr });
+  }
+ }
+
+ // What the main process says of WhatsApp: the numbers, the switch, the QR code while linking, and a line telling
+ // whether it is connected, waiting for a scan, or reconnecting. The field being typed into is left as it is.
+ takeWhatsApp(state) {
+  if (!state) return;
+  this.whatsapp = { ...this.whatsapp, ...state, refused: state.refused || '' };
+  if (!this.whatsappBox) return;
+  if (this.whatsappAllowed && document.activeElement !== this.whatsappAllowed) this.whatsappAllowed.value = (state.allowed || []).join(', ');
+  this.whatsappSwitch?.setAttribute('aria-checked', String(!!state.enabled));
+  const refused = state.refused ? I18n.t('settings.whatsapp.badAllowed') : '';
+  const status = state.status || 'off';
+  const words = status === 'connected' ? I18n.t('settings.whatsapp.connected', { who: state.me || 'WhatsApp' })
+   : status === 'qr' ? I18n.t('settings.whatsapp.scan')
+   : status === 'starting' ? I18n.t('settings.whatsapp.starting')
+   : status === 'reconnecting' ? state.error || I18n.t('settings.whatsapp.reconnecting')
+   : status === 'loggedOut' ? I18n.t('settings.whatsapp.loggedOut')
+   : status === 'error' ? state.error || I18n.t('settings.whatsapp.error')
+   : I18n.t('settings.whatsapp.off');
+  if (this.whatsappStatus) {
+   this.whatsappStatus.textContent = refused || words;
+   this.whatsappStatus.dataset.tone = refused || status === 'error' || status === 'loggedOut' ? 'error' : '';
+  }
+  const qr = status === 'qr' ? state.qr || '' : '';
+  if (this.whatsappQr) {
+   if (qr) {
+    this.whatsappQr.src = qr;
+    this.whatsappQr.hidden = false;
+   } else {
+    this.whatsappQr.removeAttribute('src');
+    this.whatsappQr.hidden = true;
+   }
+  }
+  if (this.whatsappQrStatus) {
+   this.whatsappQrStatus.textContent = qr ? I18n.t('settings.whatsapp.scan')
+    : status === 'connected' ? I18n.t('settings.whatsapp.qr.linked')
+    : !state.enabled ? I18n.t('settings.whatsapp.qr.waiting')
+    : I18n.t('settings.whatsapp.starting');
+  }
+  this.paintWhatsApp();
+ }
+
+ paintWhatsApp() {
+  const box = this.whatsappBox;
+  if (!box) return;
+  const state = this.whatsapp, status = state.status || 'off';
+  const badge = box.querySelector('.provider-state');
+  if (!badge) return;
+  const bad = status === 'error' || status === 'loggedOut' || status === 'reconnecting';
+  badge.textContent = I18n.t(
+   status === 'connected' ? 'settings.whatsapp.badgeConnected'
+   : status === 'qr' ? 'settings.whatsapp.badgeScan'
+   : bad ? 'settings.whatsapp.badgeError'
+   : 'settings.whatsapp.badgeStopped');
+  badge.classList.toggle('is-on', status === 'connected');
+  badge.classList.toggle('is-bad', bad);
+ }
+
+ // The Phone access section: the switches take the server up or down at once, the port a moment after the last key is
+ // typed. The code a phone reads is not drawn here — the button opens the same window the sidebar's icon does, so the
+ // pairing is answered in one place.
+ wireMobile() {
+  const box = this.mobileBox = this.list.querySelector('.provider[data-provider="mobile"]');
+  if (!box) return;
+  const bridge = this.mobileBridge;
+  if (!bridge) { box.hidden = true; return; }
+  this.mobileUrl = box.querySelector('[data-mobile-url]');
+  this.mobileStatus = box.querySelector('[data-mobile-status]');
+  this.mobilePort = box.querySelector('[data-mobile="port"]');
+  this.mobileDevices = box.querySelector('[data-mobile-devices]');
+  for (const node of box.querySelectorAll('.mobile-switch')) {
+   node.addEventListener('click', async () => {
+    const next = node.getAttribute('aria-checked') !== 'true';
+    node.setAttribute('aria-checked', String(next));
+    const state = await bridge.set({ [node.dataset.mobile]: next }).catch(() => null);
+    if (state) this.takeMobile(state);
+   });
+  }
+  let typing = null;
+  this.mobilePort.addEventListener('input', () => {
+   clearTimeout(typing);
+   typing = setTimeout(async () => {
+    const state = await bridge.set({ port: this.mobilePort.value.trim() || 'auto' }).catch(() => null);
+    if (state) this.takeMobile(state);
+   }, 500);
+  });
+  box.querySelector('[data-mobile-pair]').addEventListener('click', () => {
+   document.querySelector('.sidebar-mobile')?.dispatchEvent(new CustomEvent('mobile-open'));
+  });
+  box.querySelector('[data-mobile-revoke-all]').addEventListener('click', async () => {
+   for (const device of this.mobile.devices || []) await bridge.revoke(device.id).catch(() => null);
+   this.takeMobile(await bridge.get().catch(() => null));
+  });
+  this.mobileDevices.addEventListener('click', event => {
+   const row = event.target.closest('[data-device]');
+   if (!row) return;
+   const id = row.dataset.device;
+   const asked = event.target.closest('[data-revoke]') ? bridge.revoke(id) : event.target.closest('[data-disconnect]') ? bridge.disconnect(id) : null;
+   if (asked) asked.then(state => state && this.takeMobile(state));
+  });
+  bridge.onChange?.(state => state && this.takeMobile(state));
+  this.refreshMobile();
+ }
+
+ async refreshMobile() {
+  if (!this.mobileBridge) return;
+  const state = await this.mobileBridge.get().catch(() => null);
+  if (state) this.takeMobile(state);
+ }
+
+ // What the main process says of it: the switches, the address a phone opens, whether it listens, and which phones the
+ // app has let in. The field being typed into is left as it is.
+ takeMobile(state) {
+  if (!state) return;
+  this.mobile = { ...this.mobile, ...state, refused: state.refused || '' };
+  if (!this.mobileBox) return;
+  for (const node of this.mobileBox.querySelectorAll('.mobile-switch')) {
+   node.setAttribute('aria-checked', String(!!state[node.dataset.mobile]));
+  }
+  if (this.mobilePort && document.activeElement !== this.mobilePort) this.mobilePort.value = state.port === 'auto' ? '' : String(state.port);
+  this.mobileUrl.textContent = state.running ? state.url : '';
+  const bad = state.refused || state.error;
+  this.mobileStatus.textContent = state.error
+   || (state.refused ? I18n.t('settings.mobile.port.bad') : state.running
+    ? I18n.t('settings.mobile.running', { where: state.url })
+    : I18n.t('settings.mobile.stopped'));
+  this.mobileStatus.dataset.tone = bad ? 'error' : '';
+  this.drawMobileDevices(state);
+  this.paintMobile();
+ }
+
+ // One line per phone: what it is, when it was last here, and whether it is here now. A phone that is here is let go;
+ // one that is not loses its way back.
+ drawMobileDevices(state) {
+  const devices = state.devices || [];
+  this.mobileDevices.innerHTML = devices.length
+   ? devices.map(device => `
+    <li class="mobile-device${device.online ? ' is-online' : ''}" data-device="${escapeHtml(device.id)}">
+     <span class="mobile-device-mark" aria-hidden="true"></span>
+     <span class="mobile-device-name">${escapeHtml(device.name || device.id)}</span>
+     <span class="mobile-device-when">${escapeHtml(device.online
+      ? I18n.t('mobile.here')
+      : [device.lastSeen ? I18n.t('settings.mobile.lastseen', { when: new Intl.DateTimeFormat(I18n.lang, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(device.lastSeen) }) : I18n.t('mobile.never'), device.lastAddress].filter(Boolean).join(' · '))}</span>
+     ${device.online
+      ? `<button type="button" class="mobile-quiet" data-disconnect>${escapeHtml(I18n.t('mobile.disconnect'))}</button>`
+      : `<button type="button" class="mobile-quiet" data-revoke>${escapeHtml(I18n.t('mobile.revoke'))}</button>`}
+    </li>`).join('')
+   : `<li class="mobile-device is-none">${escapeHtml(I18n.t('settings.mobile.devices.none'))}</li>`;
+ }
+
+ paintMobile() {
+  const box = this.mobileBox, badge = box?.querySelector('.provider-state');
+  if (!badge) return;
+  const running = !!this.mobile.running, online = (this.mobile.devices || []).some(device => device.online);
+  badge.textContent = I18n.t(online ? 'settings.mobile.badgeLive' : running ? 'settings.mobile.badgeOn' : 'settings.mobile.badgeOff');
+  badge.classList.toggle('is-on', running);
+  badge.classList.toggle('is-bad', !!this.mobile.error);
  }
 
  paint() {
   if (!this.list) return;
   for (const node of this.list.querySelectorAll('.provider')) {
    const id = node.dataset.provider;
+   // Telegram and WhatsApp are not model providers: their badges say whether the bot or the session runs (paintTelegram,
+   // paintWhatsApp). Nor is phone access: its badge says whether a server is listening.
+   if (id === 'telegram' || id === 'whatsapp' || id === 'mobile') continue;
    // OpenAI is connected through either the ChatGPT sign-in or a key; a model both offer counts once.
    const live = (id === 'openai' ? ['chatgpt', 'openai'] : [id]).filter(source => this.working(source));
    const on = live.length > 0, count = new Set(live.flatMap(source => this.catalog[source] || []).map(model => model.api)).size;
@@ -571,39 +1039,59 @@ class Settings {
    state.classList.toggle('is-on', on);
    node.querySelector('.provider-models').textContent = on && count ? I18n.t('settings.models', { count }) : '';
   }
-  const box = this.accountBox;
-  if (!box) return;
-  box.dataset.state = this.account.waiting ? 'waiting' : this.account.connected ? 'connected' : 'idle';
-  const who = [this.account.email, this.account.plan && I18n.t('settings.chatgpt.plan', { plan: this.account.plan.charAt(0).toUpperCase() + this.account.plan.slice(1) })].filter(Boolean).join(' · ');
-  box.querySelector('.settings-account-who').textContent = this.account.waiting ? I18n.t('settings.chatgpt.waiting') : who;
+  for (const provider of ACCOUNTS) {
+   const box = this.accountBoxes?.[provider];
+   if (!box) continue;
+   const account = this.accounts[provider], device = this.devices[provider];
+   box.dataset.state = account.waiting ? 'waiting' : account.connected ? 'connected' : 'idle';
+   const who = [account.email, this.planOf(provider, account)].filter(Boolean).join(' · ');
+   box.querySelector('.settings-account-who').textContent = account.waiting
+    ? (device?.code ? I18n.t('settings.grok.code', { code: device.code }) : I18n.t(`settings.${provider}.waiting`))
+    : who;
+  }
+  this.paintTelegram();
  }
 
- setAccount(account) {
-  const was = this.account.connected;
-  this.account = { connected: !!account?.connected, email: account?.email || '', plan: account?.plan || '' };
-  if (account?.error) this.setStatus('chatgpt', account.error, 'error');
-  if (this.account.connected && !this.catalog.chatgpt.length) this.refresh('chatgpt').catch(() => {});
-  if (was !== this.account.connected) this.changed();
+ // The plan a signed-in provider speaks for: ChatGPT by its own word, Grok by the tier its tokens carry.
+ planOf(provider, account) {
+  if (provider === 'grok') return account.subscription || '';
+  return account.plan ? I18n.t('settings.chatgpt.plan', { plan: account.plan.charAt(0).toUpperCase() + account.plan.slice(1) }) : '';
+ }
+
+ setAccount(provider, account) {
+  const was = this.accounts[provider].connected;
+  this.accounts[provider] = {
+   connected: !!account?.connected,
+   email: account?.email || '',
+   plan: account?.plan || '',
+   subscription: account?.subscription || '',
+  };
+  if (account?.error) this.setStatus(provider, account.error, 'error');
+  if (!account?.connected) this.devices[provider] = null;
+  if (this.accounts[provider].connected && !this.catalog[provider]?.length) this.refresh(provider).catch(() => {});
+  if (was !== this.accounts[provider].connected) this.changed();
   else this.paint();
  }
 
- async login() {
+ async login(provider) {
   const auth = window.openghost?.auth;
-  if (!auth || this.account.waiting) return;
-  this.setStatus('chatgpt', '');
-  this.account = { ...this.account, waiting: true };
+  if (!auth || this.accounts[provider].waiting) return;
+  this.setStatus(provider, '');
+  this.devices[provider] = null;
+  this.accounts[provider] = { ...this.accounts[provider], waiting: true };
   this.paint();
-  const account = await auth.login();
-  this.setAccount(account);
+  const account = await auth.login(provider);
+  this.setAccount(provider, account);
   // The badge turning green and the account line say it all; a "signed in" line under them would only repeat it.
-  if (account?.connected) await this.refresh('chatgpt').catch(() => {});
+  if (account?.connected) await this.refresh(provider).catch(() => {});
  }
 
- async logout() {
+ async logout(provider) {
   const auth = window.openghost?.auth;
   if (!auth) return;
-  this.setAccount(await auth.logout());
-  this.setStatus('chatgpt', '');
+  this.devices[provider] = null;
+  this.setAccount(provider, await auth.logout(provider));
+  this.setStatus(provider, '');
  }
 
  open(reason = '', provider = '') {
@@ -613,7 +1101,8 @@ class Settings {
    // Over the sidebar of a window of glass it needs a ground under it to be frosted there too (glass-ground.js).
    this.grounded = window.GlassGround?.hold(this.dialog);
    this.dialog.focus();
-   this.syncAccount();
+   this.syncAccounts();
+   this.refreshTelegram();
   }
   // A missing key opens straight on Providers; otherwise the settings always open on General.
   if (reason) this.page('providers', opening);
@@ -621,7 +1110,7 @@ class Settings {
   if (reason) {
    const target = provider || FIRST_PROVIDER;
    this.setStatus(target, reason, 'error');
-   const field = target === 'chatgpt' ? this.accountBox.querySelector('[data-action="login"]') : this.inputs[target];
+   const field = ACCOUNTS.includes(target) ? this.accountBoxes[target]?.querySelector('[data-action="login"]') : this.inputs[target];
    field?.scrollIntoView({ block: 'center' });
    field?.focus();
    return;

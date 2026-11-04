@@ -77,6 +77,10 @@ function effortsOf(model) {
  return { efforts, defaultEffort, thinking: own ? 'switch' : 'levels' };
 }
 
+// Both sides of the price at nothing — the way OpenRouter says a model costs nothing to use. Its own words on the
+// matter, and read here rather than guessed from a name, since a name ending tells only when no prices come with it.
+const priced = pricing => !!pricing && Number(pricing.prompt) === 0 && Number(pricing.completion) === 0;
+
 function described(list) {
  const usable = list.filter(model => model?.id && writesText(model));
  const known = new Map();
@@ -96,6 +100,9 @@ function described(list) {
    group,
    context: Number(model.context_length) || Number(model.top_provider?.context_length) || 0,
    output: Number(model.top_provider?.max_completion_tokens) || 0,
+   // A model that charges nothing on both sides is a free one; its name ending in `:free` says the same when the
+   // prices are not given. A model said nothing of is not taken as free.
+   free: priced(model.pricing) || /:free$/i.test(String(model.id)),
    vision: input.includes('image'),
    // A model that calls no tools is talked to as a plain chat.
    tools: !params || params.includes('tools'),

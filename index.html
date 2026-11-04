@@ -30,6 +30,7 @@
       <div class="sidebar-footer">
         <settings-button class="sidebar-settings" data-i18n="settings">Settings</settings-button>
         <usage-button class="sidebar-usage"></usage-button>
+        <mobile-button class="sidebar-mobile"></mobile-button>
       </div>
     </aside>
     <main class="main is-empty">
@@ -159,6 +160,35 @@
     <div class="scrollbar settings-scrollbar" aria-hidden="true"><div class="scrollbar-thumb"></div></div>
   </dialog>
 
+  <!-- The phone's way in: the QR code a camera reads, who stands at the door, and what is connected. -->
+  <dialog class="mobile-access" closedby="any" aria-labelledby="mobile-access-title" tabindex="-1">
+    <header class="mobile-head">
+      <h2 class="mobile-title" id="mobile-access-title" data-i18n="mobile.title">Phone access</h2>
+      <close-button class="mobile-close"></close-button>
+    </header>
+    <div class="mobile-body">
+      <div class="mobile-qr-box" data-mobile-qr-box><img class="mobile-qr" data-mobile-qr alt=""></div>
+      <p class="mobile-aside" data-mobile-empty></p>
+      <p class="mobile-lead" data-i18n="mobile.lead">Scan the QR code with your phone to control this workspace.</p>
+      <p class="mobile-status" data-mobile-status role="status"></p>
+      <div class="mobile-ask" data-mobile-ask hidden>
+        <p class="mobile-ask-words" data-mobile-ask-words></p>
+        <div class="mobile-ask-buttons">
+          <button type="button" class="mobile-solid" data-mobile-allow data-i18n="mobile.allow">Allow</button>
+          <button type="button" class="mobile-quiet" data-mobile-deny data-i18n="mobile.deny">Deny</button>
+        </div>
+      </div>
+      <ul class="mobile-devices" data-mobile-devices></ul>
+      <p class="mobile-warn" data-mobile-warn hidden></p>
+    </div>
+    <footer class="mobile-foot">
+      <button type="button" class="mobile-stop" data-mobile-stop data-i18n="mobile.stop">Stop</button>
+      <span class="mobile-foot-space"></span>
+      <button type="button" class="mobile-quiet" data-mobile-again data-i18n="mobile.again">New code</button>
+      <button type="button" class="mobile-quiet" data-mobile-copy data-i18n="mobile.copy">Copy link</button>
+    </footer>
+  </dialog>
+
   <div class="splash" aria-hidden="true">
     <div class="splash-bg"><div class="splash-aura"></div><canvas class="splash-mist"></canvas></div>
     <div class="splash-fly"><div class="splash-ghost"><div class="splash-ghost-body"><ghost-thinking></ghost-thinking></div></div></div>
@@ -178,6 +208,7 @@
   <script src="search-button.js"></script>
   <script src="settings-button.js"></script>
   <script src="usage-button.js"></script>
+  <script src="mobile-button.js"></script>
   <script src="close-button.js"></script>
   <script src="clear-button.js"></script>
   <script src="effort-button.js"></script>
@@ -227,6 +258,7 @@
   <script src="usage.js"></script>
   <script src="settings-usage.js"></script>
   <script src="usage-peek.js"></script>
+  <script src="mobile-access.js"></script>
   <script src="user-context.js"></script>
   <script src="memory.js"></script>
   <script src="settings-memory.js"></script>
@@ -271,6 +303,9 @@
   <script src="browser-panel.js"></script>
   <script src="lock-ui.js"></script>
   <script src="script.js"></script>
+  <script src="telegram-agent.js"></script>
+  <script src="whatsapp-agent.js"></script>
+  <script src="mobile-agent.js"></script>
   <script src="quick-chat.js"></script>
   <script src="splash.js"></script>
 </body>

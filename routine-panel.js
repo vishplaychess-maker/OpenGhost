@@ -24,7 +24,7 @@ const PRESETS = [15, 30, 60, 120, 180, 360, 720];
 const KINDS = ['once', 'every', 'daily', 'weekly', 'monthly'];
 // The week as most of the world's calendars set it out: from Monday.
 const WEEK = [1, 2, 3, 4, 5, 6, 0];
-const GROUPS = { chatgpt: 'ChatGPT', openai: 'OpenAI API', anthropic: 'Anthropic', deepseek: 'DeepSeek', openrouter: 'OpenRouter', local: 'Local', custom: 'Custom API' };
+const GROUPS = { chatgpt: 'ChatGPT', openai: 'OpenAI API', anthropic: 'Anthropic', deepseek: 'DeepSeek', openrouter: 'OpenRouter', nvidia: 'NVIDIA', gemini: 'Google Gemini', venice: 'Venice', local: 'Local', custom: 'Custom API' };
 // From how many models the model list gets a field to find one by its name.
 const FIND_FROM = 12;
 

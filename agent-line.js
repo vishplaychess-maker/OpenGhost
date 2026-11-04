@@ -55,6 +55,12 @@ function deed(name, args = {}, cwd = '', apart = null) {
   case 'browser_press': return say('press', args.key);
   case 'browser_scroll': return say('scroll');
   case 'browser_wait': return say('wait', quote(args.text));
+  case 'take_screenshot': return say('screen');
+  case 'move_mouse': return say('moveMouse');
+  case 'left_click': return say('click');
+  case 'right_click': return say('rightClick');
+  case 'type_text': return say('type');
+  case 'press_key': return say('press', args.key);
   default: return null;
  }
 }

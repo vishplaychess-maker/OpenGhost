@@ -8,6 +8,7 @@ const { app, net } = require('electron');
 const Media = require('./media');
 const Pdf = require('./pdf');
 const Browser = require('./browser');
+const Automation = require('./automation-tool');
 
 const OUTPUT = { head: 12000, tail: 18000 };
 const TIMEOUT = { shell: 120, max: 900, git: 120, fetch: 30, probe: 10 };
@@ -31,7 +32,29 @@ const SPAWN = WINDOWS ? { windowsHide: true } : { detached: true };
 
 // A chat started without a project folder works in a folder of its own in here. It sits in the home folder, not next to the app:
 // an update replaces the app's own folder whole, and Documents and the desktop are often synced by OneDrive or iCloud.
-const CHATS = path.join(os.homedir(), 'OpenGhost', 'Chats');
+// Where it sits is a setting, because the drive a home folder is on is not always the one with room for a year of
+// chats: the guard that keeps one chat out of another's folder, and the empty folder a deleted chat leaves behind,
+// both follow wherever it is pointed.
+const CHATS_HOME = path.join(os.homedir(), 'OpenGhost', 'Chats');
+let CHATS = CHATS_HOME;
+
+// A place chats can be kept in: an absolute path with a name of its own. A whole drive, or any root folder, is not —
+// every folder under it would then be taken for one chat's own, and the chats' own folders would be its siblings.
+function chatsTo(dir) {
+ const wanted = typeof dir === 'string' ? dir.trim() : '';
+ if (!wanted) return CHATS_HOME;
+ if (!path.isAbsolute(wanted)) return null;
+ const fixed = path.resolve(wanted);
+ return path.parse(fixed).root === path.normalize(fixed) ? null : fixed;
+}
+
+function setChats(dir) {
+ const fixed = chatsTo(dir);
+ if (!fixed) return null;
+ CHATS = fixed;
+ return CHATS;
+}
+
 const inChats = dir => {
  const rest = path.relative(CHATS, dir);
  return !!rest && !rest.startsWith('..') && !path.isAbsolute(rest);
@@ -523,7 +546,15 @@ const TOOLS = {
  fetch_url: fetchUrl,
 };
 
-async function runTool(id, name, args, cwd, sender) {
+async function runTool(id, name, args, cwd, sender, ticket) {
+ // Mouse, keyboard and screen belong to no project folder; every input action needs its one-use approval ticket.
+ if (Automation.NAMES.has(name)) {
+  try {
+   return await Automation.run(String(id || ''), name, args && typeof args === 'object' ? args : {}, String(ticket || ''), sender?.id);
+  } catch (error) {
+   return { error: explain(error) };
+  }
+ }
  if (name.startsWith('browser_')) {
   try {
    return await cancellable(String(id || ''), signal => Browser.run(name, args && typeof args === 'object' ? args : {}, sender, signal));
@@ -545,6 +576,12 @@ async function runTool(id, name, args, cwd, sender) {
  } catch (error) {
   return { error: explain(error, error.file) };
  }
+}
+
+// Called from the renderer only after the user has allowed this exact action on its card (chat.js).
+function authorize(name, args, sender) {
+ if (!Automation.NAMES.has(name)) return { error: `Unknown tool ${name}` };
+ return Automation.authorize(name, args && typeof args === 'object' ? args : {}, sender?.id);
 }
 
 function cancel(id) {
@@ -600,4 +637,5 @@ async function release(dir) {
  return fs.promises.rmdir(dir).then(() => true, () => false);
 }
 
-module.exports = { runTool, cancel, cancelAll, environment, guide, release, mark, changed, changes, ports, CHATS };
+module.exports = { runTool, authorize, cancel, cancelAll, environment, guide, release, mark, changed, changes, ports,
+ get CHATS() { return CHATS; }, setChats, chatsTo };

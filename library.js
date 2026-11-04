@@ -50,7 +50,19 @@ class Library {
   this.gone = new Set();
   // With the quick chat the app has two windows over one index: each takes in what the other has written.
   store.onChange?.(key => { if (key === INDEX) this.reload(); });
+  // The folder the chats without a project are kept in is the app's own business, not this window's: a change made in
+  // one window is taken in by the others, and a chat's folder is made from it anew each time it is asked for.
+  window.openghost?.onChatsFolder?.(folder => this.setHome(folder));
   this.ready = this.load();
+ }
+
+ // The chats folder moved (Settings → General). What was there before came along with it, so every chat of this kind
+ // still stands under the new folder by the same name.
+ setHome(folder) {
+  const next = typeof folder === 'string' ? folder.trim() : '';
+  if (!next || next === this.home.path) return;
+  this.home.path = next;
+  this.onChange();
  }
 
  async load() {
