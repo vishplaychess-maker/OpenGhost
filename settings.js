@@ -2,9 +2,9 @@
 'use strict';
 
 const STORAGE = { effort: 'deepseek.effort', mode: 'openghost.mode', model: 'openghost.model', catalog: 'openghost.catalog', free: 'openghost.freeOnly' };
-const KEYS = { openai: 'openai.apiKey', anthropic: 'anthropic.apiKey', deepseek: 'deepseek.apiKey', openrouter: 'openrouter.apiKey', nvidia: 'nvidia.apiKey', gemini: 'gemini.apiKey', venice: 'venice.apiKey', iteracompute: 'iteracompute.apiKey', zro: 'zro.apiKey', infron: 'infron.apiKey', tokenharbor: 'tokenharbor.apiKey', yeta: 'yeta.apiKey', local: 'local.address', custom: 'custom.apiKey' };
+const KEYS = { openai: 'openai.apiKey', anthropic: 'anthropic.apiKey', deepseek: 'deepseek.apiKey', openrouter: 'openrouter.apiKey', nvidia: 'nvidia.apiKey', gemini: 'gemini.apiKey', venice: 'venice.apiKey', iteracompute: 'iteracompute.apiKey', zro: 'zro.apiKey', infron: 'infron.apiKey', tokenharbor: 'tokenharbor.apiKey', yeta: 'yeta.apiKey', wusrouter: 'wusrouter.apiKey', local: 'local.address', custom: 'custom.apiKey' };
 // The order providers appear in, in the settings and in the model picker.
-const ORDER = ['chatgpt', 'openai', 'grok', 'iteracompute', 'zro', 'infron', 'tokenharbor', 'yeta', 'anthropic', 'deepseek', 'openrouter', 'nvidia', 'gemini', 'venice', 'local', 'custom'];
+const ORDER = ['chatgpt', 'openai', 'grok', 'iteracompute', 'zro', 'infron', 'tokenharbor', 'yeta', 'wusrouter', 'anthropic', 'deepseek', 'openrouter', 'nvidia', 'gemini', 'venice', 'local', 'custom'];
 // The providers a plan pays for: reached by signing in, with no key and no field to type one into.
 const ACCOUNTS = ['chatgpt', 'grok'];
 // The provider the app starts with: the settings ask for its key when nothing is connected, and new chats take its first
@@ -28,6 +28,7 @@ const LINKS = {
  infron: ['https://infron.ai/', 'infron.ai'],
  tokenharbor: ['https://tokenharbor.ai/', 'tokenharbor.ai'],
  yeta: ['https://platform.yeta.ai/', 'platform.yeta.ai'],
+ wusrouter: ['https://wusrouter.com/', 'wusrouter.com'],
 };
 // What the user may write in by hand where a provider's own word is not enough. `models`: names of models its list
 // does not hold. `context`: the size of the window, for the providers whose servers may not tell it. `address`: where a
@@ -43,6 +44,7 @@ const HAND = {
  infron: { models: 'infron.models' },
  tokenharbor: { models: 'tokenharbor.models' },
  yeta: { models: 'yeta.models' },
+ wusrouter: { models: 'wusrouter.models' },
  local: { models: 'local.models', context: 'local.context' },
  custom: { models: 'custom.models', context: 'custom.context', address: 'custom.address' },
 };
@@ -696,6 +698,7 @@ class Settings {
    section('infron', 'Infron', keyRow('infron') + handRow('infron', 'models', 'qwen/qwen3.8-27b:free')),
    section('tokenharbor', 'Token Harbor', keyRow('tokenharbor') + handRow('tokenharbor', 'models', 'openai/deepseek-v4.1-flash:free')),
    section('yeta', 'Yeta', keyRow('yeta') + handRow('yeta', 'models', 'deepseek-v4.1-flash')),
+   section('wusrouter', 'WusRouter', keyRow('wusrouter') + handRow('wusrouter', 'models', 'uc/deepseek-v4-flash:free')),
    section('anthropic', 'Anthropic', keyRow('anthropic') + handRow('anthropic', 'models', 'claude-…')),
    section('deepseek', 'DeepSeek', keyRow('deepseek')),
    section('openrouter', 'OpenRouter', keyRow('openrouter')),

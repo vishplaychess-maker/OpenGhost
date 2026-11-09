@@ -9,7 +9,7 @@ bridge?.onEvent(data => listeners.get(data.id)?.(data));
 
 // The least window a model needs to hold the agent's instructions and tools (about 12,400 tokens) and still answer.
 const NEED = 16000;
-const NAMES = { deepseek: 'DeepSeek', openai: 'OpenAI', chatgpt: 'ChatGPT', grok: 'Grok', anthropic: 'Anthropic', openrouter: 'OpenRouter', nvidia: 'NVIDIA', gemini: 'Gemini', venice: 'Venice', iteracompute: 'IteraCompute', zro: 'Zro', infron: 'Infron', tokenharbor: 'Token Harbor', yeta: 'Yeta', local: 'Local', custom: 'Custom API' };
+const NAMES = { deepseek: 'DeepSeek', openai: 'OpenAI', chatgpt: 'ChatGPT', grok: 'Grok', anthropic: 'Anthropic', openrouter: 'OpenRouter', nvidia: 'NVIDIA', gemini: 'Gemini', venice: 'Venice', iteracompute: 'IteraCompute', zro: 'Zro', infron: 'Infron', tokenharbor: 'Token Harbor', yeta: 'Yeta', wusrouter: 'WusRouter', local: 'Local', custom: 'Custom API' };
 
 class ProviderError extends Error {
  constructor(message, status = 0, code = '') {
