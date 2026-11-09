@@ -361,11 +361,23 @@ ipcMain.handle('edit:do', (event, action) => { if (fromApp(event) && EDITS.has(a
 Pictures.register();
 
 // The app keeps everything of a person in one folder, and Windows puts that folder under C:\Users\<name>\AppData.
-// OpenGhost was put on D:, so at the first start after this is added the folder moves there, once.
+// The move off it goes to a folder beside the app's own — the repository's parent while one is being worked on — and
+// nowhere at all in a built app, where guessing would name some stranger's Program Files. On any machine an
+// environment word says another place instead, and for a built app it is the only way the move is asked for.
 // The old folder is only ever read from and nothing in it is deleted: the move is undone by taking away the word
 // written below and starting again, and both copies stay whole until the new one is checked over by hand.
-const DATA_HOME = 'D:\\experiment\\.openghost-data';
 const MOVED = '.openghost-data-moved';
+const DATA_HOME = dataHome();
+
+// The place asked for, or none. A word said for it wins, so a folder already holding the data of a person is found
+// again whatever the app is sitting in.
+function dataHome() {
+	const said = String(process.env.OPENGHOST_DATA_HOME || '').trim();
+	if (said) return path.resolve(said);
+	// Where the app lives while it is being worked on is its own folder; the place beside it is the one a person
+	// would choose without being told.
+	return app.isPackaged ? null : path.join(path.dirname(app.getAppPath()), '.openghost-data');
+}
 // What Chromium makes again by itself once its folder has moved: page parts, shader blobs, its own locks. Not carried
 // over is not left behind — a cache is nothing a person lost.
 const REGROWN = new Set(['Cache', 'Code Cache', 'GPUCache', 'GrShaderCache', 'ShaderCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'GPUPersistentCache', 'Shared Dictionary', 'Service Worker', 'blob_storage', 'DIPS', 'DIPS-wal', 'lockfile', 'declarative_performance_observer.db', 'declarative_performance_observer.db-journal']);
@@ -409,7 +421,8 @@ function short(where, copied) {
 }
 
 function moveDataHome() {
- if (process.platform !== 'win32') return;
+ // Nothing to do where no place was asked for: off Windows, and in a built app that was not told where to go.
+ if (process.platform !== 'win32' || !DATA_HOME) return;
  // A folder asked for on the command line is a word said on purpose, and the move stands down before it.
  if (process.argv.some(arg => String(arg).startsWith('--user-data-dir'))) return;
  const from = app.getPath('userData');
