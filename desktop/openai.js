@@ -18,9 +18,6 @@ const UNKNOWN = { context: 272000, efforts: ['low', 'medium', 'high'] };
 // With names alone to go by: which of them are chat models. The rest of what a key lists draws, speaks, listens or
 // counts, and can't hold a chat.
 const NAMED = { chat: /^(gpt-\d|o\d|chatgpt-|ft:)/, other: /audio|realtime|image|tts|transcribe|search|embedding|moderation|instruct/ };
-// The models that turned down a word about thinking, remembered while the app runs: they are asked without one.
-const plain = new Set();
-
 const error = (message, status = 0, code = '') => Object.assign(new Error(message), { status, code });
 
 // No model is named in this file. OpenAI serves its own Codex a catalogue of the models an account can use, each with
@@ -43,6 +40,7 @@ const describe = provider => entry => {
   output: Number(entry.max_output_tokens) || Number(entry.max_completion_tokens) || 0,
   vision: !Array.isArray(entry.input_modalities) || entry.input_modalities.includes('image'),
   efforts,
+  fast: (Array.isArray(entry.service_tiers) && entry.service_tiers.some(tier => ['priority', 'fast'].includes(typeof tier === 'string' ? tier : tier?.id))) || (Array.isArray(entry.additional_speed_tiers) && entry.additional_speed_tiers.includes('fast')),
   defaultEffort: efforts.includes(entry.default_reasoning_level) ? entry.default_reasoning_level : efforts.includes('medium') ? 'medium' : efforts[0],
  };
 };
@@ -74,7 +72,7 @@ async function catalog(who, headers, codexUrl) {
 
 // A model only its name is known of: one the catalogue does not hold, or one the user wrote in by hand.
 const title = id => id.replace(/^gpt/, 'GPT').replace(/-([a-z])/g, (match, letter) => `-${letter.toUpperCase()}`);
-const byName = id => ({ ...describe('openai')({ slug: id, display_name: /^ft:/.test(id) ? id : title(id) }), ...(plain.has(id) ? { efforts: ['none'], defaultEffort: 'none' } : {}) });
+const byName = id => describe('openai')({ slug: id, display_name: /^ft:/.test(id) ? id : title(id) });
 const chats = list => list.filter(item => NAMED.chat.test(item.id) && !NAMED.other.test(item.id)).sort((a, b) => (b.created || 0) - (a.created || 0));
 
 // A key gets every chat model it may use: first the ones the catalogue describes, in the catalogue's order, then the
@@ -133,13 +131,30 @@ function keep(item) {
 }
 
 async function failure(response) {
- let detail = '', code = '';
+ let detail = '', code = '', param = '';
  try {
   const body = await response.json();
   detail = body.error?.message || body.detail?.message || (typeof body.detail === 'string' ? body.detail : '') || body.message || '';
   code = body.error?.code || body.error?.type || body.detail?.code || '';
+  const field = body.error?.param ?? body.detail?.param;
+  if (typeof field === 'string') param = field;
  } catch {}
- return error(detail || `OpenAI returned error ${response.status}`, response.status, code);
+ return Object.assign(error(detail || `OpenAI returned error ${response.status}`, response.status, code), { param });
+}
+
+// Only an explicit unsupported parameter permits request-local compatibility. A rejected effort value is an error,
+// never evidence that this model (or another connection with the same name) has no reasoning controls.
+function omitUnsupported(body, problem) {
+ if (problem.status !== 400 || !['unsupported_parameter', 'unknown_parameter'].includes(problem.code)) return false;
+ if (problem.param === 'reasoning' && body.reasoning) {
+  delete body.reasoning;
+  delete body.include;
+ } else if (problem.param === 'reasoning.summary' && body.reasoning?.summary !== undefined) {
+  delete body.reasoning.summary;
+ } else if (/^include(?:\[\d+\])?$/.test(problem.param) && body.include) {
+  delete body.include;
+ } else return false; // In particular, never remove the selected reasoning.effort.
+ return true;
 }
 
 async function* events(body) {
@@ -166,7 +181,7 @@ async function* events(body) {
  }
 }
 
-async function target({ provider, key, session }, { chatgpt, grok, version, apiUrl = API_URL, codexUrl = CODEX_URL }) {
+async function target({ provider, key, session, model, fast, speed }, { chatgpt, grok, version, apiUrl = API_URL, codexUrl = CODEX_URL }) {
  if (provider === 'grok') {
   const headers = grok.signed(await grok.credentials());
   if (session) headers['session-id'] = session;
@@ -175,6 +190,8 @@ async function target({ provider, key, session }, { chatgpt, grok, version, apiU
  if (provider !== 'chatgpt') return { url: `${apiUrl}/responses`, headers: { Authorization: `Bearer ${key}` } };
  const headers = signed(await chatgpt(), version);
  if (session) headers['session-id'] = session;
+ // The subscription backend routes before reading inference parameters. This is a routing hint, not a client identity.
+ if (typeof model === 'string' && /^[A-Za-z0-9._:/\[\]-]+$/.test(model)) headers['x-codex-routing-hint'] = `model=${model}${fast === true && speed === 'fast' ? ';tier=priority' : ''}`;
  return { url: `${codexUrl}/responses`, headers };
 }
 
@@ -191,9 +208,7 @@ async function stream(request, context) {
   include: ['reasoning.encrypted_content'],
   reasoning: effort && effort !== 'none' ? { effort, summary: 'auto' } : { effort: 'none' },
  };
- // A model that does not think takes no word about thinking.
- const unthinking = () => { delete body.include; delete body.reasoning; };
- if (plain.has(api)) unthinking();
+ if (request.fast === true && ['standard', 'fast'].includes(request.speed)) body.service_tier = request.speed === 'fast' ? 'priority' : 'default';
  if (tools?.length) {
   body.tools = tools.map(tool => ({ type: 'function', name: tool.function.name, description: tool.function.description, parameters: tool.function.parameters, strict: false }));
   body.tool_choice = 'auto';
@@ -213,20 +228,14 @@ async function stream(request, context) {
    throw error('network', 0, 'network');
   }
  };
- let response = await post(), stale = false;
- if (!response.ok) {
+ let response = await post();
+ while (!response.ok) {
   const problem = await failure(response);
-  // An older model, one the catalogue does not describe, turns down the word about thinking every request carries: it
-  // is asked again without it, and the list of models is read anew so the app shows it as a model that does not think.
-  if (!(request.provider !== 'chatgpt' && body.reasoning && problem.status === 400 && /reasoning|encrypted_content/i.test(problem.message))) throw problem;
-  plain.add(api);
-  unthinking();
-  stale = true;
+  if (request.provider === 'chatgpt' || !omitUnsupported(body, problem)) throw problem;
+  // Each pass removes a rejected parameter once. Nothing is learned across requests, models or accounts.
   response = await post();
-  if (!response.ok) throw await failure(response);
  }
  const result = { content: '', reasoning: '', toolCalls: [], finishReason: null, usage: null, native: { provider: request.provider === 'grok' ? 'grok' : 'openai', items: [] } };
- if (stale) result.stale = true;
  let textItem = '';
  const say = delta => { result.content += delta; onEvent({ type: 'content', delta }); };
  for await (const event of events(response.body)) {
@@ -246,6 +255,7 @@ async function stream(request, context) {
    if (item?.type === 'function_call') result.toolCalls.push({ id: item.call_id, type: 'function', function: { name: item.name, arguments: item.arguments } });
   } else if (event.type === 'response.completed' || event.type === 'response.incomplete') {
    const done = event.response || {};
+   if (typeof done.service_tier === 'string') result.serviceTier = done.service_tier;
    const usage = done.usage || {};
    const details = usage.input_tokens_details || {};
    result.usage = { prompt_tokens: usage.input_tokens || 0, completion_tokens: usage.output_tokens || 0, total_tokens: usage.total_tokens || 0, cached_tokens: details.cached_tokens || 0, written_tokens: details.cache_write_tokens || 0 };
@@ -254,7 +264,9 @@ async function stream(request, context) {
    return result;
   } else if (event.type === 'response.failed' || event.type === 'error') {
    const problem = event.response?.error || event.error || event;
-   throw error(problem.message || 'OpenAI stopped the answer', Number(problem.status) || 0, problem.code || '');
+   // The envelope's type "error" is not a provider error code; a nested error type can be one.
+   const code = problem.code || (problem !== event ? problem.type : '') || '';
+   throw error(problem.message || 'OpenAI stopped the answer', Number(problem.status) || Number(problem.status_code) || 0, code);
   }
  }
  // A clean EOF can still be a lost connection. No terminal response means the answer is incomplete.

@@ -315,7 +315,9 @@ class Settings {
   this.shown = this.model;
   this.read = 0;
   const effort = localStorage.getItem(STORAGE.effort);
-  this.effort = typeof effort === 'string' && effort ? effort : DEFAULT_EFFORT;
+  // Read the old application-wide value only to migrate existing chats. New chats use their model's default.
+  this.legacyEffort = typeof effort === 'string' && effort ? effort : DEFAULT_EFFORT;
+  this.effort = DEFAULT_EFFORT;
   const mode = localStorage.getItem(STORAGE.mode);
   this.mode = MODES.includes(mode) ? mode : DEFAULT_MODE;
   // Whether the picker shows only the models that cost nothing. A way of looking, kept between starts.
@@ -539,11 +541,11 @@ class Settings {
   return (this.models.find(item => item.provider === FIRST_PROVIDER) || this.models[0])?.id || '';
  }
 
- configFor(id) {
+ configFor(id, preferred = '') {
   const model = this.find(id);
   const provider = model?.provider || FIRST_PROVIDER;
   const efforts = model?.efforts?.length ? model.efforts : EFFORTS;
-  const effort = efforts.includes(this.effort) ? this.effort : [model?.defaultEffort, DEFAULT_EFFORT].find(level => efforts.includes(level)) || efforts[efforts.length - 1];
+  const effort = efforts.includes(preferred) ? preferred : [model?.defaultEffort, DEFAULT_EFFORT].find(level => efforts.includes(level)) || efforts[efforts.length - 1];
   return {
    id: model?.id || id,
    provider,
@@ -556,6 +558,10 @@ class Settings {
    ready: !!model && this.connected(provider),
    effort,
    efforts,
+   fast: model?.fast === true,
+   fastBeta: model?.fastBeta || '',
+   fastLookup: model?.fastLookup === true && typeof model.fast !== 'boolean',
+   speed: 'standard',
    vision: model?.vision !== false,
    // A model that calls no tools is talked to as a plain chat.
    tools: model?.tools !== false,
@@ -587,7 +593,6 @@ class Settings {
   if (!efforts.includes(this.effort)) {
    const fallback = [model?.defaultEffort, DEFAULT_EFFORT].find(level => efforts.includes(level));
    this.effort = fallback || efforts[Math.min(efforts.length - 1, 2)];
-   localStorage.setItem(STORAGE.effort, this.effort);
   }
   if (!same) this.onEfforts?.(this.efforts);
  }
@@ -598,9 +603,9 @@ class Settings {
   localStorage.setItem(STORAGE.model, id);
  }
 
+ // View-only compatibility for controls without a chat. A chat's slider writes through Chat.setEffort.
  setEffort(value) {
   this.effort = value;
-  localStorage.setItem(STORAGE.effort, value);
  }
 
  setMode(value) {
@@ -623,7 +628,7 @@ class Settings {
  }
 
  // What another window of the app has changed since this one read it: the keys, the sign-in, the providers' lists of
- // models, and the model, effort and mode last chosen. The quick chat's window takes them in each time it is called.
+ // models, and the model and mode last chosen. Chat effort is kept in the library, not in these shared preferences.
  async reread() {
   this.keys = this.readKeys();
   this.hand = this.readHand();
@@ -633,8 +638,7 @@ class Settings {
   }
   this.catalog = this.readCatalog();
   this.model = localStorage.getItem(STORAGE.model) || '';
-  const effort = localStorage.getItem(STORAGE.effort), mode = localStorage.getItem(STORAGE.mode);
-  if (effort) this.effort = effort;
+  const mode = localStorage.getItem(STORAGE.mode);
   if (MODES.includes(mode)) this.mode = mode;
   this.freeOnly = localStorage.getItem(STORAGE.free) === 'on';
   this.changed();

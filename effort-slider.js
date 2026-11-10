@@ -28,10 +28,12 @@ const rubber = d => (1 - 1 / (d * RUBBER.k / RUBBER.limit + 1)) * RUBBER.limit;
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 class EffortSlider {
- constructor({ button, panel, settings }) {
+ constructor({ button, panel, settings, chat = null }) {
   this.button = button;
   this.panel = panel;
   this.settings = settings;
+  this.chat = chat;
+  this.scope = chat?.active;
   this.slider = panel.querySelector('.effort-slider');
   this.track = panel.querySelector('.effort-track');
   this.fill = panel.querySelector('.effort-fill');
@@ -44,7 +46,8 @@ class EffortSlider {
   this.opened = false;
   this.locked = false;
   this.lens = 0;
-  this.efforts = settings.efforts?.length ? settings.efforts.slice() : EFFORTS.slice();
+  const config = this.configuration();
+  this.efforts = config.efforts?.length ? config.efforts.slice() : EFFORTS.slice();
   // A model with one level has nothing to choose: its control is not shown at all.
   button.toggleAttribute('hidden', this.efforts.length < 2);
   this.morph = new EffortMorph({
@@ -54,10 +57,10 @@ class EffortSlider {
    onOpened: () => this.onOpened(),
    onClosed: () => this.onClosed(),
   });
-  this.stage = new EffortStage(panel, { onDismiss: () => this.close(), lens: () => this.thumb.getBoundingClientRect(), room: () => this.button.closest('.mini')?.getBoundingClientRect() || null });
+  this.stage = new EffortStage(panel, { onDismiss: () => this.close(), lens: () => this.thumb.getBoundingClientRect(), room: () => this.button.closest('.mini, .main')?.getBoundingClientRect() || null });
   this.ticks = [];
   this.fillTicks();
-  const saved = this.efforts.indexOf(settings.effort);
+  const saved = this.efforts.indexOf(config.effort);
   this.value = saved < 0 ? Math.max(0, this.efforts.indexOf('high')) : saved;
   this.pos = this.value;
   this.vel = 0;
@@ -69,6 +72,26 @@ class EffortSlider {
   this.raf = 0;
   this.last = 0;
   this.tick = this.tick.bind(this);
+
+  const fast = this.fastButton = document.createElement('button');
+  fast.type = 'button';
+  fast.className = 'effort-fast';
+  fast.hidden = true;
+  fast.innerHTML = window.Glyphs?.bolt || '';
+  fast.setAttribute('aria-pressed', 'false');
+  panel.insertBefore(fast, this.slider);
+  fast.addEventListener('click', () => {
+   if (this.locked || !this.configuration().fast) return;
+   const value = this.configuration().speed === 'fast' ? 'standard' : 'fast';
+   if (this.chat?.setSpeed(value)) this.syncSpeed();
+  });
+  window.addEventListener('model-speed-change', () => this.follow());
+  panel.addEventListener('focusout', event => {
+   if (panel.contains(event.relatedTarget)) return;
+   requestAnimationFrame(() => {
+    if (this.opened && !panel.contains(document.activeElement)) this.close();
+   });
+  });
 
   button.addEventListener('effort-toggle', e => this.toggle(e.detail.keyboard));
   this.slider.addEventListener('pointerdown', e => this.onDown(e));
@@ -87,15 +110,66 @@ class EffortSlider {
   });
   new ResizeObserver(() => this.relayout()).observe(panel);
 
-  this.commit(this.value);
+  this.commit(this.value, false);
   button.setLevel(this.value, true);
   button.setCount(this.efforts.length);
   const prior = settings.onEfforts;
-  settings.onEfforts = efforts => { prior?.(efforts); this.setEfforts(efforts); };
+  settings.onEfforts = efforts => { prior?.(efforts); this.setEfforts(this.configuration().efforts || efforts); this.follow(); };
+  this.syncSpeed(config);
+ }
+
+ syncSpeed(config = this.configuration()) {
+  if (!this.fastButton) return;
+  const supported = config.fast === true && typeof this.chat?.setSpeed === 'function';
+  const changed = supported !== this.fastSupported;
+  this.fastSupported = supported;
+  this.fastButton.hidden = !supported;
+  this.fastButton.disabled = !!this.locked;
+  const on = supported && config.speed === 'fast';
+  this.fastButton.setAttribute('aria-pressed', String(on));
+  const action = I18n.t(on ? 'effort.fast.disable' : 'effort.fast.enable');
+  const cost = I18n.t(config.provider === 'chatgpt' ? 'effort.fast.chatgpt' : 'effort.fast.cost');
+  this.fastButton.setAttribute('aria-label', action);
+  this.fastButton.title = `${action}\n${cost}`;
+  this.panel.classList.toggle('has-fast', supported);
+  this.panel.classList.toggle('fast-only', supported && this.efforts.length < 2);
+  this.button.toggleAttribute('hidden', this.efforts.length < 2 && !supported);
+  this.button.style.minWidth = supported && this.efforts.length < 2 ? '34px' : '';
+  this.button.setAttribute('data-speed', on ? 'fast' : 'standard');
+  const name = EffortStage.nameOf(config.effort);
+  this.button.setAttribute('label', I18n.t(on ? 'effort.current.fast' : 'effort.current', { name }));
+  if (changed && this.opened) this.relayout();
+  const model = this.settings.find?.(config.id);
+  if (config.fastLookup && model && window.Providers?.speed && this.speedModel !== model) {
+   this.speedModel = model;
+   const key = config.key;
+   window.Providers.speed(config).then(info => {
+    if (this.settings.find(config.id) !== model || this.settings.configFor(config.id).key !== key) return;
+    model.fast = info.fast === true;
+    window.dispatchEvent(new CustomEvent('model-speed-change', { detail: { id: config.id } }));
+   }).catch(() => {}); // Unknown is hidden until a fresh catalogue can confirm it; inference failures never change this.
+  }
+ }
+
+ configuration() {
+  return this.chat ? this.chat.config(this.chat.active) : { effort: this.settings.effort, efforts: this.settings.efforts };
  }
 
  get isOpen() {
   return this.opened;
+ }
+
+ measureGeometry() {
+  return { left: this.track.offsetLeft, width: this.track.offsetWidth, origin: this.slider.getBoundingClientRect().left };
+ }
+
+ // Use the lens's spring position, never the selected stop, so a hand can reverse the resize midway.
+ updateCompact() {
+  const amount = this.fastSupported && this.max > 0 ? Number(smoothstep(0, 1, this.pos).toFixed(4)) : 0;
+  if (amount === this.compact) return false;
+  this.compact = amount;
+  this.panel.style.setProperty('--effort-compact', String(amount));
+  return true;
  }
 
  toggle(keyboard) {
@@ -103,11 +177,17 @@ class EffortSlider {
   else if (!this.locked) this.open();
  }
 
- // The level was chosen in another window of the app: the slider and its button take it.
+ // A chat switch or a library refresh only displays that chat's value; it never saves a choice into another chat.
  follow() {
-  const index = this.efforts.indexOf(this.settings.effort);
-  if (index < 0 || index === this.value || this.opened) return;
+  const scope = this.chat?.active;
+  if (scope !== this.scope) { if (this.opened) this.close(); this.scope = scope; }
+  const config = this.configuration();
+  this.setEfforts(config.efforts);
+  this.syncSpeed(config);
+  const index = this.efforts.indexOf(config.effort);
+  if (index < 0 || this.opened) return;
   this.value = this.goal = this.pos = index;
+  this.commit(index, false);
   this.button.setLevel(index, true);
  }
 
@@ -117,6 +197,7 @@ class EffortSlider {
   this.locked = locked;
   this.button.toggleAttribute('disabled', locked);
   this.button.title = locked ? I18n.t('effort.locked') : '';
+  if (this.fastButton) this.fastButton.disabled = locked;
   if (locked) this.close();
  }
 
@@ -124,8 +205,9 @@ class EffortSlider {
   this.opened = true;
   if (!this.panel.matches(':popover-open')) {
    this.panel.showPopover();
-   this.geo = { left: this.track.offsetLeft, width: this.track.offsetWidth, origin: this.slider.getBoundingClientRect().left };
    this.pos = this.goal = this.value;
+   this.updateCompact();
+   this.geo = this.measureGeometry();
    this.vel = 0;
    this.stretch = [0, 0];
    this.press = [0, 0];
@@ -142,7 +224,7 @@ class EffortSlider {
   this.button.hideSegments(true);
   this.stage.open({ index: this.value, levels: this.efforts });
   this.morph.to(1);
-  this.slider.focus({ preventScroll: true });
+  (this.efforts.length < 2 && this.fastSupported ? this.fastButton : this.slider).focus({ preventScroll: true });
  }
 
  close(focusButton = false) {
@@ -167,7 +249,7 @@ class EffortSlider {
   if (!this.opened || !this.panel.matches(':popover-open')) return;
   if (!this.morph.settled) { this.relayoutPending = true; return; }
   this.relayoutPending = false;
-  this.geo = { left: this.track.offsetLeft, width: this.track.offsetWidth, origin: this.slider.getBoundingClientRect().left };
+  this.geo = this.measureGeometry();
   this.morph.measure(this.value);
   this.paint.layout(this.paintBox());
   this.render();
@@ -185,6 +267,10 @@ class EffortSlider {
 
  onMorph(m) {
   this.lens = m;
+  if (this.fastButton) {
+   this.panel.style.setProperty('--fast-reveal', smoothstep(0.82, 0.98, m).toFixed(3));
+   this.fastButton.style.pointerEvents = m >= 0.96 ? '' : 'none';
+  }
   this.thumb.style.opacity = smoothstep(LENS_REVEAL.from, LENS_REVEAL.fade, m).toFixed(3);
   this.paint.fade(smoothstep(...(this.opened ? PAINT_ARRIVE : PAINT_FADE), m));
   this.render();
@@ -229,19 +315,20 @@ class EffortSlider {
   const same = next.length === this.efforts.length && next.every((level, i) => level === this.efforts[i]);
   if (same) return;
   this.efforts = next;
-  this.button.toggleAttribute('hidden', next.length < 2);
-  if (next.length < 2 && this.opened) this.close();
+  const speedAvailable = this.configuration().fast === true && typeof this.chat?.setSpeed === 'function';
+  this.button.toggleAttribute('hidden', next.length < 2 && !speedAvailable);
+  if (next.length < 2 && !speedAvailable && this.opened) this.close();
   this.button.setCount(next.length);
   this.morph.setLevels(next.length);
   this.fillTicks();
-  let index = next.indexOf(this.settings.effort);
+  let index = next.indexOf(this.configuration().effort);
   if (index < 0) index = next.indexOf('high');
   if (index < 0) index = Math.min(next.length - 1, 2);
   this.value = this.goal = this.pos = index;
   this.button.setLevel(index, true);
-  this.commit(index);
+  this.commit(index, false);
   if (this.opened && this.panel.matches(':popover-open')) {
-   this.geo = { left: this.track.offsetLeft, width: this.track.offsetWidth, origin: this.slider.getBoundingClientRect().left };
+   this.geo = this.measureGeometry();
    this.morph.measure(this.value);
    this.paint.layout(this.paintBox());
    this.stage.show({ index, levels: next, dir: 1 });
@@ -265,7 +352,7 @@ class EffortSlider {
 
  pointerPos(e) {
   const rect = this.slider.getBoundingClientRect(), scale = rect.width / this.slider.offsetWidth || 1;
-  return ((e.clientX - rect.left) / scale - this.geo.left) / this.geo.width * (this.max || 1);
+  return ((e.clientX - rect.left) / scale - this.geo.left - (this.drag?.offset || 0)) / this.geo.width * (this.max || 1);
  }
 
  shape(raw) {
@@ -282,15 +369,16 @@ class EffortSlider {
   this.slider.setPointerCapture(e.pointerId);
   const raw = this.pointerPos(e);
   const onThumb = Math.abs(raw - this.pos) / (this.max || 1) * this.geo.width <= LENS.width / 2 + GRAB_SLOP;
-  this.drag = { id: e.pointerId, offset: onThumb ? raw - this.pos : 0 };
+  this.drag = { id: e.pointerId, x: e.clientX, offset: onThumb ? (raw - this.pos) / (this.max || 1) * this.geo.width : 0 };
   this.panel.classList.add('is-dragging');
-  this.goal = this.shape(raw - this.drag.offset);
+  this.goal = this.shape(this.pointerPos(e));
   this.wake();
  }
 
  onMove(e) {
   if (!this.drag || e.pointerId !== this.drag.id) return;
-  this.goal = this.shape(this.pointerPos(e) - this.drag.offset);
+  this.drag.x = e.clientX;
+  this.goal = this.shape(this.pointerPos(e));
   this.syncPaint();
   this.wake();
  }
@@ -308,8 +396,8 @@ class EffortSlider {
  }
 
  moveTo(i) {
+  if (this.locked || !this.commit(i)) return;
   this.goal = i;
-  this.commit(i);
   this.syncPaint();
   this.wake();
  }
@@ -319,18 +407,23 @@ class EffortSlider {
   const to = step ? clamp(this.value + step, 0, this.max) : { Home: 0, End: this.max }[e.key];
   if (to !== undefined) { e.preventDefault(); if (!this.drag) this.moveTo(to); }
   else if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); this.close(true); }
-  else if (e.key === 'Tab') this.close();
+  else if (e.key === 'Tab' && !this.fastSupported) this.close();
  }
 
- commit(i) {
+ commit(i, remember = true) {
   const value = this.efforts[i];
-  if (!value) return;
+  if (!value) return false;
+  if (remember) {
+   if (this.chat) { if (!this.chat.setEffort(value)) return false; }
+   else if (value !== this.settings.effort) this.settings.setEffort(value);
+  }
   const name = EffortStage.nameOf(value);
   this.value = i;
-  if (value !== this.settings.effort) this.settings.setEffort(value);
   this.slider.setAttribute('aria-valuenow', String(i));
   this.slider.setAttribute('aria-valuetext', name);
   this.button.setAttribute('label', I18n.t('effort.current', { name }));
+  this.syncSpeed();
+  return true;
  }
 
  wake() {
@@ -386,6 +479,10 @@ class EffortSlider {
 
  render() {
   if (!this.geo) return;
+  if (this.updateCompact()) {
+   this.geo = this.measureGeometry();
+   if (this.drag) { this.goal = this.shape(this.pointerPos({ clientX: this.drag.x })); this.syncPaint(); }
+  }
   const appear = LENS_REVEAL.scale + (1 - LENS_REVEAL.scale) * backOut(clamp((this.lens - LENS_REVEAL.from) / (1 - LENS_REVEAL.from), 0, 1));
   const x = this.snap(this.x(this.pos)), grow = (1 + PRESS_GROW * clamp(this.press[0], 0, 1.2)) * appear, stretch = this.stretch[0];
   this.thumb.style.transform = `translate(${x - LENS.width / 2}px, ${-LENS.height / 2}px) scale(${grow * (1 + stretch)}, ${grow * (1 - 0.35 * stretch)})`;

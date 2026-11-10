@@ -57,12 +57,21 @@ class SidePanels {
   // A press beside a panel that is over the chat puts it away; its own button does that itself.
   document.addEventListener('pointerdown', event => {
    const path = event.composedPath();
+   const browser = this.browser, splitBrowser = this.splitBrowser;
+   const hasSplit = this.app.classList.contains('has-split');
    if (this.peek && !path.includes(sidebar) && !path.includes(toggle)) this.setPeek(false);
-   if (browser?.peek && !path.includes(browser.root) && !path.includes(browser.toggle)) browser.setPeek(false);
+   if (browser?.peek && !path.includes(browser.root) && !path.includes(browser.toggle)) {
+    if (!hasSplit || path.includes(this.main) || path.includes(sidebar)) browser.setPeek(false);
+   }
+   if (splitBrowser?.peek && !path.includes(splitBrowser.root) && !path.includes(splitBrowser.toggle)) {
+    if (!hasSplit || path.includes(splitBrowser.main) || path.includes(sidebar)) splitBrowser.setPeek(false);
+   }
   }, true);
   document.addEventListener('keydown', event => {
    if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
+   const browser = this.browser;
    if (this.peek) this.setPeek(false);
+   else if (this.splitBrowser?.peek && (this.splitBrowser.root.contains(document.activeElement) || this.splitBrowser.main?.contains(document.activeElement) || !browser?.peek)) this.splitBrowser.setPeek(false);
    else if (browser?.peek) browser.setPeek(false);
   });
   this.layout();
@@ -109,7 +118,7 @@ class SidePanels {
   const sum = selector => inset + [...main.querySelectorAll(selector)].filter(seen).reduce((total, el) => total + el.offsetWidth + 8, 0);
   const left = sum(':scope > .top-tools, :scope > .notes-pill'), right = sum(':scope > .routines-pill, :scope > .update-pill, :scope > .browser-tools');
   const top = seen(main.querySelector(':scope > .plan-island')) ? 2 * Math.max(left, right) + CHAT.island : left + right + CHAT.between;
-  return Math.ceil(Math.max(CHAT.least, composer, top));
+  return Math.ceil(Math.max(CHAT.least, composer, top, this.splitRoom?.() || 0));
  }
 
  // The sidebar's width now: the one the user dragged it to, or its own (a share of the window, never less than 240).
@@ -126,14 +135,15 @@ class SidePanels {
  // browser at the width the browser would have.
  layout() {
   const width = innerWidth, gap = this.gap(), side = this.side(), browser = this.browser, least = this.least();
+  const splitOpen = (this.splitRoom?.() || 0) > 0;
   this.app.style.setProperty('--sidebar-size', `${side}px`);
-  let dockBrowser = true, room = width - side;
+  let dockBrowser = !splitOpen, room = width - side;
   if (browser) {
-   dockBrowser = width - 3 * gap - browser.least >= least;
+   dockBrowser = !splitOpen && width - 3 * gap - browser.least >= least;
    browser.setDocked(dockBrowser);
    // An open browser keeps its room even while out of sight: the sidebar does not come back in its place as the
-   // window narrows, only once the browser is closed.
-   if (browser.open) room -= 2 * gap + browser.natural(width - side - 3 * gap);
+   // window narrows, only once the browser is closed. In split view both browsers open over their chats instead.
+   if (browser.open && !splitOpen) room -= 2 * gap + browser.natural(width - side - 3 * gap);
    else room -= gap;
   } else room -= gap;
   this.docked = room >= least;
@@ -141,8 +151,16 @@ class SidePanels {
   if (browser) {
    browser.fit();
    // Over the chat the browser keeps a strip of the chat in sight.
-   const most = width - 2 * gap - PEEK.inset - PEEK.keep;
-   this.app.style.setProperty('--browser-peek-width', `${Math.round(Math.max(Math.min(browser.least, most), Math.min(browser.natural(width - 3 * gap), most)))}px`);
+   const peekWidth = (panel, cardWidth) => {
+    const most = cardWidth - PEEK.inset - PEEK.keep;
+    return Math.round(Math.max(Math.min(panel.least, most), Math.min(panel.natural(cardWidth - gap), most)));
+   };
+   const leftCard = splitOpen ? (this.main?.clientWidth || (width - 2 * gap - 14) / 2) : (width - 2 * gap);
+   this.app.style.setProperty('--browser-peek-width', `${peekWidth(browser, leftCard)}px`);
+   if (this.splitBrowser) {
+    const rightCard = splitOpen ? (this.splitBrowser.main?.clientWidth || (width - 2 * gap - 14) / 2) : (width - 2 * gap);
+    this.app.style.setProperty('--split-browser-peek-width', `${peekWidth(this.splitBrowser, rightCard)}px`);
+   }
   }
   this.app.style.setProperty('--sidebar-peek-width', `${Math.round(Math.min(side, width - 2 * gap - PEEK.inset - PEEK.keep))}px`);
  }

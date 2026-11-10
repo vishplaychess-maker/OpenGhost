@@ -511,13 +511,22 @@ function ports() {
 async function readPorts() {
  const found = new Set();
  if (WINDOWS) {
-  // A listening socket has no other end yet: its foreign address ends in :0. That holds whatever the system's language.
-  const { output = '' } = await run('', 'netstat', ['-ano'], { cwd: os.homedir(), timeout: TIMEOUT.probe });
-  for (const line of output.split(/\r?\n/)) {
-   const parts = line.trim().split(/\s+/);
-   if (parts[0] !== 'TCP' || !/:0$/.test(parts[2] || '')) continue;
-   const port = Number(parts[1].slice(parts[1].lastIndexOf(':') + 1));
-   if (port) found.add(port);
+  // netstat can omit fresh listeners or leave misleading rows on some Windows builds. Prefer the TCP provider.
+  const tcp = await run('', 'powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Get-NetTCPConnection -ErrorAction Stop | Where-Object { $_.RemotePort -eq 0 } | ForEach-Object { $_.LocalPort }'], { cwd: os.homedir(), timeout: TIMEOUT.probe });
+  if (tcp.code === 0) {
+   for (const line of tcp.output.split(/\r?\n/)) {
+    const port = /^\s*\d{1,5}\s*$/.test(line) ? Number(line) : 0;
+    if (port > 0 && port <= 65535) found.add(port);
+   }
+  } else {
+   // Older systems without the cmdlet keep the original, language-independent netstat fallback.
+   const { output = '' } = await run('', 'netstat', ['-ano'], { cwd: os.homedir(), timeout: TIMEOUT.probe });
+   for (const line of output.split(/\r?\n/)) {
+    const parts = line.trim().split(/\s+/);
+    if (parts[0] !== 'TCP' || !/:0$/.test(parts[2] || '')) continue;
+    const port = Number(parts[1].slice(parts[1].lastIndexOf(':') + 1));
+    if (port) found.add(port);
+   }
   }
  } else {
   let { output = '', code } = process.platform === 'linux' ? await run('', 'ss', ['-ltnH'], { cwd: os.homedir(), timeout: TIMEOUT.probe }) : { code: 1 };
@@ -546,6 +555,25 @@ const TOOLS = {
  fetch_url: fetchUrl,
 };
 
+// Browser exports/uploads are ordinary user files, never a route into keys, cookies, sealed pictures or chat data.
+function browserFile(cwd, given) {
+ const full = resolvePath(cwd, given), profile = app.getPath('userData');
+ if (!ownChat(physical(cwd), physical(full))) throw Object.assign(new Error('That file belongs to another chat folder.'), { plain: true });
+ if (within(pathKey(full), pathKey(path.resolve(profile))) || within(pathKey(physical(full)), pathKey(physical(profile)))) {
+  throw Object.assign(new Error('The application profile is private and cannot be exported or uploaded through browser tools.'), { plain: true });
+ }
+ return full;
+}
+
+async function workingFolder(cwd) {
+ if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw Object.assign(new Error('This chat has no project folder'), { plain: true });
+ resolvePath(cwd, '.');
+ let stat = await fs.promises.stat(cwd).catch(() => null);
+ // A chat's own folder is made the first time the agent needs it, so chats that only talk leave nothing on disk.
+ if (!stat && inChats(cwd)) stat = await fs.promises.mkdir(cwd, { recursive: true }).then(() => fs.promises.stat(cwd)).catch(() => null);
+ if (!stat?.isDirectory()) throw Object.assign(new Error(`The project folder ${cwd} doesn't exist anymore`), { plain: true });
+}
+
 async function runTool(id, name, args, cwd, sender, ticket) {
  // Mouse, keyboard and screen belong to no project folder; every input action needs its one-use approval ticket.
  if (Automation.NAMES.has(name)) {
@@ -555,24 +583,13 @@ async function runTool(id, name, args, cwd, sender, ticket) {
    return { error: explain(error) };
   }
  }
- if (name.startsWith('browser_')) {
-  try {
-   return await cancellable(String(id || ''), signal => Browser.run(name, args && typeof args === 'object' ? args : {}, sender, signal));
-  } catch (error) {
-   return { error: explain(error) };
-  }
- }
- const tool = TOOLS[name];
- if (!tool) return { error: `Unknown tool ${name}` };
- if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) return { error: 'This chat has no project folder' };
- try { resolvePath(cwd, '.'); }
- catch (error) { return { error: explain(error) }; }
- let stat = await fs.promises.stat(cwd).catch(() => null);
- // A chat's own folder is made the first time the agent needs it, so chats that only talk leave nothing on disk.
- if (!stat && inChats(cwd)) stat = await fs.promises.mkdir(cwd, { recursive: true }).then(() => fs.promises.stat(cwd)).catch(() => null);
- if (!stat?.isDirectory()) return { error: `The project folder ${cwd} doesn't exist anymore` };
+ const browser = name.startsWith('browser_'), tool = TOOLS[name], params = args && typeof args === 'object' ? args : {};
+ if (!browser && !tool) return { error: `Unknown tool ${name}` };
+ const files = name === 'browser_upload' || (name === 'browser_screenshot' && params.save_to !== undefined);
  try {
-  return await tool(String(id || ''), args && typeof args === 'object' ? args : {}, cwd);
+  if (!browser || files) await workingFolder(cwd);
+  if (browser) return await cancellable(String(id || ''), signal => Browser.run(name, params, sender, signal, files ? { file: given => browserFile(cwd, given) } : null));
+  return await tool(String(id || ''), params, cwd);
  } catch (error) {
   return { error: explain(error, error.file) };
  }

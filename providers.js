@@ -22,6 +22,7 @@ class ProviderError extends Error {
 
 function explain(provider, { status = 0, code = '', message = '' }) {
  const name = NAMES[provider] || provider;
+ code = String(code || '').trim().toLowerCase();
  // A local server is the user's own program: when it is not there the app says so in plain words, and when it answers
  // with an error, its own words say more than a status would (a model too large for the memory, a name it does not know).
  if (provider === 'local') return code === 'network' ? I18n.t('error.local') : message || I18n.t('error.statusOf', { provider: name, status });
@@ -29,7 +30,7 @@ function explain(provider, { status = 0, code = '', message = '' }) {
  if (provider === 'custom' && status !== 401) return code === 'network' ? I18n.t('error.custom') : message || I18n.t('error.statusOf', { provider: name, status });
  if (code === 'network') return I18n.t('error.connect', { provider: name });
  if (status === 401) return I18n.t(provider === 'chatgpt' ? 'error.signin' : provider === 'grok' ? 'error.signinGrok' : 'error.key', { provider: name });
- if (status === 402 || code === 'insufficient_quota' || code === 'billing_error') return I18n.t('error.quota', { provider: name });
+ if (status === 402 || QUOTA.has(code)) return I18n.t('error.quota', { provider: name });
  if (status === 429) return I18n.t('error.rate', { provider: name });
  if (status >= 500) return I18n.t('error.server', { provider: name });
  return message || I18n.t('error.statusOf', { provider: name, status });
@@ -41,16 +42,26 @@ const aborted = partial => Object.assign(new DOMException('Aborted', 'AbortError
 // these: asking again would get the same answer. A local server's own 500 usually means the request itself cannot be
 // done (the model does not fit, the name is unknown), so that is not waited out either.
 const TRANSIENT = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
-const PERMANENT = new Set(['insufficient_quota', 'billing_error', 'content_filter']);
+const QUOTA = new Set(['insufficient_quota', 'billing_error', 'credit_balance_exhausted', 'organization_spend_limit_exceeded', 'project_spend_limit_exceeded', 'organization_usage_limit_exceeded']);
+const PERMANENT = new Set([...QUOTA, 'content_filter']);
+// An HTTP 200 stream may end with an error code, with no numeric status at all. It is still a temporary failure.
+const TRANSIENT_CODES = new Set(['server_error', 'internal_server_error', 'server_overloaded', 'server_is_overloaded', 'overloaded_error', 'service_unavailable', 'service_unavailable_error', 'temporarily_unavailable', 'rate_limit_exceeded', 'rate_limit_error', 'slow_down']);
+const OVERLOAD_MESSAGE = 'our servers are currently overloaded. please try again later.';
 const WAITS = [1000, 2000, 4000, 8000, 16000, 32000];
 
 function transient(error, provider) {
  if (!error || error.name === 'AbortError') return false;
- if (PERMANENT.has(error.code)) return false;
- if (error.code === 'network') return true;
+ const code = String(error.code || '').trim().toLowerCase();
+ if (PERMANENT.has(code)) return false;
  const status = Number(error.status) || 0;
- if (provider === 'local' && status === 500) return false;
- return TRANSIENT.has(status);
+ // Explicit request/auth errors win over a misleading symbolic code. Preserve local model errors as before.
+ if (status >= 400) return !(provider === 'local' && status === 500) && TRANSIENT.has(status);
+ if (code === 'network') return true;
+ if (provider === 'local') return false;
+ if (TRANSIENT_CODES.has(code)) return true;
+ // The known GPT overload wording can arrive without either field. Do not infer retries from arbitrary error text.
+ return !code && (provider === 'openai' || provider === 'chatgpt')
+  && String(error.message || '').replace(/\s+/g, ' ').trim().toLowerCase() === OVERLOAD_MESSAGE;
 }
 
 function pause(ms, signal) {
@@ -62,18 +73,27 @@ function pause(ms, signal) {
  });
 }
 
-// The same request, again, while the failure is the kind that passes. Once a letter, a thought or a tool call has
-// reached the chat, it is not asked again: the person would see the start twice, and a tool might run twice.
-async function endure(config, run, { signal, onRetry } = {}) {
+// One outage budget for both safe request replays and Chat's continuation from saved progress. A partial stream
+// must not acquire another six attempts just because the next request contains its retained text.
+async function retry(config, error, { signal, onRetry, retryBudget = { used: 0 } } = {}) {
+ if (signal?.aborted) throw aborted(error?.partial);
+ if (!transient(error, config.provider) || retryBudget.used >= WAITS.length) return false;
+ const ms = WAITS[retryBudget.used++];
+ onRetry?.();
+ await pause(ms, signal);
+ return true;
+}
+
+// The same request, again, only before any content, reasoning or tool activity. Chat can continue a partial response
+// with a different request and retained history, but this layer never blindly replays one that has already begun.
+async function endure(config, run, { signal, onRetry, retryBudget = { used: 0 } } = {}) {
  let begun = false;
  const begin = () => { begun = true; };
- for (let attempt = 0; ; attempt++) {
+ for (;;) {
   try {
    return await run(begin);
   } catch (error) {
-   if (signal?.aborted || error.name === 'AbortError' || begun || !transient(error, config.provider) || attempt >= WAITS.length) throw error;
-   onRetry?.();
-   await pause(WAITS[attempt], signal);
+   if (begun || !await retry(config, error, { signal, onRetry, retryBudget })) throw error;
   }
  }
 }
@@ -84,7 +104,7 @@ function viaMain(config, { messages, tools, signal, onReasoning, onContent, onAc
  const id = `llm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
  const request = {
   provider: config.provider, key: config.key, address: config.address, window: config.window, model: config.model, effort: config.effort, vision: config.vision,
-  thinking: config.thinking, output: config.output, messages, tools, maxTokens, session, once, aside,
+  thinking: config.thinking, output: config.output, fast: config.fast === true, fastBeta: config.fastBeta || '', speed: config.speed || 'standard', messages, tools, maxTokens, session, once, aside,
  };
  return new Promise((resolve, reject) => {
   const partial = { content: '', reasoning: '', toolCalls: [], finishReason: null, usage: null };
@@ -135,12 +155,13 @@ function heard(begin, onContent, onReasoning) {
 async function stream(config, options) {
  // A model whose window is smaller than the agent's instructions would lose them without a word: said before it is asked.
  if (config.window && config.window < NEED) throw new ProviderError(I18n.t('error.window', { window: config.window.toLocaleString('en-US'), need: NEED.toLocaleString('en-US') }));
- const { messages, tools, signal, onReasoning, onContent, onRetry } = options;
+ const { messages, tools, signal, onReasoning, onContent, onRetry, retryBudget } = options;
  const result = await endure(config, begin => {
   const live = heard(begin, onContent, onReasoning);
   if (config.provider !== 'deepseek') return viaMain(config, { ...options, ...live });
   return DeepSeek.streamChat({ key: config.key, model: config.model, effort: config.effort, vision: config.vision, messages, tools, signal, ...live });
- }, { signal, onRetry });
+ }, { signal, onRetry, retryBudget });
+ if (retryBudget) retryBudget.used = 0;
  return counted(config, result);
 }
 
@@ -161,7 +182,7 @@ function sideComplete(config, { messages, signal, maxTokens, ...live }) {
  // A model that always thinks spends its room on thinking first, so it gets room for both. So does a service's model:
  // its "none" is only offered, and one that turns it down is asked again with nothing said and thinks as it likes.
  const room = config.provider === 'anthropic' || config.provider === 'custom' || config.provider === 'nvidia' || !efforts.includes('none') ? Math.max(maxTokens, 2048) : maxTokens;
- return viaMain({ ...config, effort }, { messages, signal, maxTokens: room, once: true, ...live });
+ return viaMain({ ...config, effort, speed: 'standard' }, { messages, signal, maxTokens: room, once: true, ...live });
 }
 
 // A prediction of the user's next message (predictions.js): the chat's own request with a word from the app at its end,
@@ -220,5 +241,12 @@ async function account(provider, key) {
  return reply?.account || null;
 }
 
-window.Providers = { stream, complete, predict, models, account, NAMES, NEED, available: !!bridge };
+async function speed({ provider, key, model }) {
+ if (!bridge?.speed) return { fast: false };
+ const reply = await bridge.speed(provider, key, model);
+ if (reply?.error) throw new ProviderError(reply.error.message, reply.error.status);
+ return { fast: reply?.fast === true };
+}
+
+window.Providers = { stream, complete, predict, models, account, speed, retry, NAMES, NEED, available: !!bridge };
 })();

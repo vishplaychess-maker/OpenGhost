@@ -158,6 +158,7 @@ contextBridge.exposeInMainWorld('openghost', {
  size: {
   get: () => ipcRenderer.invoke('size:get'),
   set: choice => ipcRenderer.invoke('size:set', choice),
+  setSplit: split => ipcRenderer.sendSync('size:split', !!split),
   onChange: callback => ipcRenderer.on('size:changed', (event, state) => callback(state)),
  },
  // On a Mac: whether the system lets the app into every folder without asking, and the system's page where that is set.
@@ -214,6 +215,7 @@ contextBridge.exposeInMainWorld('openghost', {
   onEvent: callback => ipcRenderer.on('llm:event', (event, data) => callback(data)),
   models: (provider, key, extra) => ipcRenderer.invoke('llm:models', provider, key, extra),
   account: (provider, key) => ipcRenderer.invoke('llm:account', provider, key),
+  speed: (provider, key, model) => ipcRenderer.invoke('llm:speed', provider, key, model),
  },
  // The keys come from the main process's memory, read before the window opened, so asking for them never waits on the disk.
  keys: {

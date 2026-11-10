@@ -1,0 +1,73 @@
+'use strict';
+// Boots the real desktop/main.js + index.html, not a component fixture. Only the provider reply is held locally.
+const {app,BrowserWindow,shell}=require('electron');const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert/strict');
+const root=path.resolve(__dirname,'..'),output=fs.mkdtempSync(path.join(os.tmpdir(),'og-real-controls-')),baseline=process.argv.includes('--baseline'),checkEnd=process.argv.includes('--all');
+for(const dir of ['profile','session','workspace'])fs.mkdirSync(path.join(output,dir),{recursive:true});app.setName('OpenGhost UI check');app.setPath('userData',path.join(output,'profile'));app.setPath('sessionData',path.join(output,'session'));delete process.env.OPENGHOST_UPDATE_AS;
+// Do not rewrite the user's source-launch shortcut during a disposable test.
+shell.writeShortcutLink=()=>true;
+process.stdout?.on('error',()=>{});process.stderr?.on('error',()=>{});
+const report={output,baseline,checkEnd,checks:[],errors:[],screenshots:[]};let finished=false;
+function finish(error){if(finished)return;finished=true;if(error)report.error=String(error.stack||error);fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({output,checks:report.checks.length,error:report.error||null}));app.exit(error?1:0)}
+process.on('uncaughtException',finish);process.on('unhandledRejection',finish);setTimeout(()=>finish(Error('Full application UI check timeout')),150000);
+const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),check=(name,pass)=>{assert.ok(pass,name);report.checks.push(name)};
+app.on('browser-window-created',(_event,win)=>win.webContents.on('console-message',event=>{if(event.level==='error')report.errors.push(event.message)}));
+const Update=require(path.join(root,'desktop','update.js')),setupUpdate=Update.setup;let mainWindow=()=>null;
+Update.setup=host=>{mainWindow=host.window;return setupUpdate(host)};
+require(path.join(root,'desktop','main.js'));
+app.whenReady().then(async()=>{
+ let win;for(let n=0;n<300;n++){win=mainWindow();if(win&&!win.webContents.isLoading())break;await pause(50)}assert.ok(win,'Real main window exists');win.webContents.setBackgroundThrottling(false);win.setTitle('OpenGhost · UI check');win.setContentSize(1280,860);win.show();win.focus();
+ const js=code=>{report.lastScript=code.slice(0,500);return win.webContents.executeJavaScript(code)};
+ const wait=async condition=>{let last='';for(let n=0;n<400;n++){try{if(await js(condition))return}catch(error){last=String(error)}await pause(30)}throw Error('Not ready: '+condition+' '+last)};
+ const settle=async()=>{await pause(80);await js(`Promise.race([Promise.all(document.getAnimations().filter(a=>a.effect?.getTiming().iterations!==Infinity&&a.playState==='running').map(a=>a.finished.catch(()=>{}))),new Promise(resolve=>setTimeout(resolve,1300))]).then(()=>null)`);await pause(120)};
+ const click=async expression=>{const p=await js(`(()=>{const el=${expression};el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`);for(const type of ['mouseMoved','mousePressed','mouseReleased'])await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent',{type,...p,...(type==='mouseMoved'?{}:{button:'left',clickCount:1})});await settle()};
+ const shot=async(name,expression=null)=>{await settle();let rect;if(expression)rect=await js(`(()=>{const r=(${expression}).getBoundingClientRect();return {x:Math.max(0,Math.floor(r.x-6)),y:Math.max(0,Math.floor(r.y-6)),width:Math.ceil(r.width+12),height:Math.ceil(r.height+12)}})()`);if(rect){const zoom=win.webContents.getZoomFactor();rect={x:Math.floor(rect.x*zoom),y:Math.floor(rect.y*zoom),width:Math.ceil(rect.width*zoom),height:Math.ceil(rect.height*zoom)}}const file=path.join(output,name+'.png');fs.writeFileSync(file,(await win.webContents.capturePage(rect)).toPNG());report.screenshots.push(file);if(name==='real-end-detail'){const photo=await win.webContents.capturePage(rect),large=path.join(output,'real-end-detail-large.png');fs.writeFileSync(large,photo.resize({width:photo.getSize().width*3,quality:'best'}).toPNG());report.screenshots.push(large)}return file};
+ await wait(`typeof chat!=='undefined'&&typeof chatList!=='undefined'&&!!chatList&&!!library.home`);await js(`library.ready.then(()=>null)`);await wait(`!document.documentElement.classList.contains('is-splash')`);await pause(350);
+ await js(`(()=>{const tour=document.querySelector('.tour');if(tour){const skip=[...tour.querySelectorAll('button')].find(b=>/skip|пропуст|ignorer|salta/i.test(b.textContent));skip?.click()}})()`);await wait(`!document.querySelector('.tour')`);
+ await js(`(async()=>{localStorage.setItem('openghost.lang','ru');await Theme.set('light');library.home.path=${JSON.stringify(path.join(output,'workspace'))};settings.models=[{id:'ui-review',api:'ui-review',provider:'custom',name:'Тестовая модель',context:128000,efforts:['low','medium','high'],defaultEffort:'high',tools:true,vision:true}];settings.model='ui-review';settings.shown='';settings.keys.custom='local-fixture-only';settings.hand.custom.address='http://127.0.0.1:1';settings.connected=provider=>provider==='custom';Providers.complete=async()=>({content:'',usage:null});Providers.predict=async()=>'';Providers.stream=async(config,options)=>{if(config.id!=='ui-review')throw Error('Unexpected live provider');const text='Проверка интерфейса. Ответ удерживается локально до нажатия End.';options.onContent?.(text,{content:text});await new Promise((resolve,reject)=>{const stop=()=>reject(new DOMException('Stopped','AbortError'));if(options.signal.aborted)stop();else options.signal.addEventListener('abort',stop,{once:true})});};const item=library.create({folder:null,text:'Проверка элементов интерфейса',attachments:[]});library.update(item.id,{model:'ui-review',effort:'high',title:'Проверка интерфейса',named:true});window.reviewId=item.id;await ChatStore.write('chats/'+item.id,{messages:[{role:'user',text:'Проверка интерфейса',content:'Проверка интерфейса',attachments:[]}],tokens:0});await chat.open(item.id);syncAll();await library.flush();return null})()`);await settle();
+ report.page=win.webContents.getURL();report.profile=app.getPath('userData');check('Full desktop application loaded its real index.html',report.page.replace(/%20/g,' ').endsWith('/index.html')&&await js(`!window.openghost.quick&&!!window.openghost?.tools&&chat instanceof Chat&&library instanceof Library&&document.querySelector('.app')!==null`));
+ win.webContents.debugger.attach('1.3');await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled',{enabled:true});
+ const mode=async value=>{await js(`modePicker.set(${JSON.stringify(value)});void 0`);await settle();check(value+': real mode control reflects its conversation',await js(`chat.mode===${JSON.stringify(value)}&&document.querySelector('.composer-mode').dataset.mode===${JSON.stringify(value)}`))};
+ const openMenu=async()=>{await js(`chatList.menu.close(true);void 0`);await click(`chatList.rows.get(reviewId).row.querySelector('[data-action="more"]')`);await wait(`chatList.menu.root.matches(':popover-open')`)};
+ const hasReset=()=>js(`!!chatList.menu.root.querySelector('[data-name="permissions"]')`);
+ await mode('full');await openMenu();check('Full access with no grants: reset visibility matches requirement',await hasReset()===baseline);await shot('full-access-menu-before-after');await js(`chatList.menu.close(true);void 0`);
+ await mode('ask');await openMenu();check('ASK with no grants: no useless reset item',await hasReset()===baseline);await js(`chatList.menu.close(true);library.allowPermission(reviewId,'ui-fixture-rule')`);
+ await openMenu();check('ASK with a saved grant offers reset',await hasReset());await shot('ask-with-grants','chatList.menu.root');await click(`chatList.menu.root.querySelector('[data-name="permissions"]')`);await wait(`!chatList.menu.id`);check('Real reset removes the saved grant from the test profile',await js(`library.permissions(reviewId).then(r=>r.length===0)`));
+ await openMenu();check('After reset the item is absent on reopening',await hasReset()===baseline);await js(`chatList.menu.close(true);library.allowPermission(reviewId,'ui-fixture-rule')`);
+ for(const value of ['auto','full']){await mode(value);await openMenu();check(value+': stored ASK rules do not add reset to a different mode',await hasReset()===baseline);await js(`chatList.menu.close(true);void 0`)}
+ await mode('full');await js(`composerText.place('Проверка кнопки End без внешних запросов');syncComposer();void 0`);await click(`composerSend.button`);await wait(`chat.busy&&composerSend.hasAttribute('stop')&&!composerSend.raf`);await settle();
+ report.end=await js(`(()=>{const word=composerSend.words,icon=composerSend.shadowRoot.querySelector('.stop-mark'),style=getComputedStyle(word),canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');ctx.font=style.font;const e=ctx.measureText('E');return {color:getComputedStyle(composerSend.button).backgroundColor,font:style.font,fontSize:style.fontSize,fontWeight:style.fontWeight,capHeight:e.actualBoundingBoxAscent+e.actualBoundingBoxDescent,eWidth:e.width,pixelRatio:devicePixelRatio,square:icon.getBoundingClientRect().toJSON(),word:word.getBoundingClientRect().toJSON(),button:composerSend.button.getBoundingClientRect().toJSON()}})()`);
+ await shot('real-app-end-light');await shot('real-end-detail','composerSend.button');
+ let measureEndInk;
+ if(checkEnd){
+  check('End uses the reference coral-red surface',report.end.color==='rgb(255, 77, 87)');check('End uses semibold rather than heavy bold',Number(report.end.fontWeight)===600);
+  check('Stop square and actual capital E are the same height',Math.abs(report.end.capHeight-report.end.square.height)<.05);
+  check('Stop square and capital-height word box have the same center',Math.abs(report.end.word.top+report.end.word.height/2-report.end.square.top-report.end.square.height/2)<.05);
+  const measureInk=async()=>{
+   const geometry=await js(`(()=>{const c=composerSend.ink,r=c.getBoundingClientRect(),b=composerSend.endBitmap,button=composerSend.button.getBoundingClientRect(),sx=r.width/c.width;return {dpr:devicePixelRatio,square:{left:r.left+b.left*sx,right:r.left+(b.left+b.n)*sx},E:{left:r.left+b.x*sx,right:r.left+(b.x+b.eWidth)*sx},top:button.top+4,bottom:button.bottom-4}})()`);
+   const native=await win.webContents.capturePage(),size=native.getSize(),pixels=native.toBitmap(),dpr=geometry.dpr;
+   const ink=region=>{let lo=Infinity,hi=-1;for(let y=Math.max(0,Math.floor(geometry.top*dpr));y<Math.min(size.height,Math.ceil(geometry.bottom*dpr));y++)for(let x=Math.max(0,Math.floor(region.left*dpr));x<Math.min(size.width,Math.ceil(region.right*dpr));x++){const at=(y*size.width+x)*4;if(pixels[at]>235&&pixels[at+1]>235&&pixels[at+2]>235){lo=Math.min(lo,y);hi=Math.max(hi,y)}}assert.ok(hi>=lo,'White reference ink is present in real application capture');return {top:lo,bottom:hi,height:hi-lo+1,center:(lo+hi)/2}};
+   return {dpr,square:ink(geometry.square),E:ink(geometry.E)};
+  };
+  measureEndInk=measureInk;report.endPixels=await measureInk();
+  check('Visible E and square are exactly the same pixel height',report.endPixels.E.height===report.endPixels.square.height);
+  check('Visible E and square share the exact same top and bottom pixels',report.endPixels.E.top===report.endPixels.square.top&&report.endPixels.E.bottom===report.endPixels.square.bottom);
+  const originalZoom=win.webContents.getZoomFactor(),scale=await js('devicePixelRatio')/originalZoom;report.rasterMatrix=[];
+  for(const theme of ['light','dark']){
+   await js(`Theme.set('${theme}')`);await settle();
+   for(const height of [860,861]){
+    win.setContentSize(1280,height);
+    for(const dpr of [1,1.25,1.3125,1.5,1.8,2,2.5]){
+     win.webContents.setZoomFactor(dpr/scale);await pause(150);await wait(`!composerSend.raf&&!!composerSend.endBitmap&&Math.abs(composerSend.endBitmap.dpr-devicePixelRatio)<.0001`);await settle();
+     const pixels=await measureInk();report.rasterMatrix.push({theme,height,...pixels});
+     check(`${theme}/${height}/DPR${dpr}: square and E have identical visible height and edges`,pixels.square.height===pixels.E.height&&pixels.square.top===pixels.E.top&&pixels.square.bottom===pixels.E.bottom);
+     if(height===860&&dpr===1.5)await shot('real-end-'+theme+'-150','composerSend.button');
+    }
+   }
+  }
+  check('Repeated End frames reuse the prepared font raster',await js(`(()=>{const b=composerSend.endBitmap;composerSend.paintEnd(composerSend.offsetHeight,1);composerSend.paintEnd(composerSend.offsetHeight,.5);composerSend.paintEnd(composerSend.offsetHeight,1);return b===composerSend.endBitmap})()`));
+  win.setContentSize(1280,860);win.webContents.setZoomFactor(originalZoom);await js(`Theme.set('light')`);await settle();
+ }
+ await click(`composerSend.button`);await wait(`!chat.busy`);check('End cancels the real application turn and restores sending',await js(`!chat.active.turn&&!composerSend.hasAttribute('stop')`));await js(`Theme.set('dark')`);await settle();
+ await js(`composerText.place('Проверка тёмной темы');syncComposer();void 0`);await click(`composerSend.button`);await wait(`chat.busy&&composerSend.hasAttribute('stop')&&!composerSend.raf`);await shot('real-app-end-dark');if(checkEnd){report.freshDarkPixels=await measureEndInk();check('Fresh End after a dark-theme send transition keeps white ink and exact edges',report.freshDarkPixels.E.top===report.freshDarkPixels.square.top&&report.freshDarkPixels.E.bottom===report.freshDarkPixels.square.bottom)}await click(`composerSend.button`);await wait(`!chat.busy`);
+ await js(`Promise.resolve(library.flush()).then(()=>null)`);check('Full application has no renderer errors',report.errors.length===0);finish();
+}).catch(finish);

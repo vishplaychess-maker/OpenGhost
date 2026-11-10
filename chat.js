@@ -56,6 +56,7 @@ const TOOL_NOTES = {
  message: 'The user didn\'t approve this and sent a new message instead, read it next.',
  withdrawn: 'This note comes from the app, not from the user: the user took that message back before you could read it, so there is no new message. The step it stood in for was not done: ask the user how to go on before you try it again.',
  cancelled: 'Cancelled: the user stopped the agent.',
+ reconnect: 'This note comes from the app, not from the user: the last response was interrupted by a temporary provider failure. Continue the user\'s task from the saved progress, without restarting or repeating text already shown. Completed tool calls and their results above remain valid: do not run them again just because the response was interrupted. Incomplete tool calls from the failed response were discarded and were not executed; request them afresh only if still needed. Continue working without asking the user to press Retry.',
  images: 'This message comes from the app, not from the user: the pictures your last tool calls returned, in order.',
  browserMessage: 'The user has taken control of the browser and sent you a message instead, read it next. The browser stays theirs until they press Hand back.',
  handedBack: 'The user took control of the browser for a while and has handed it back. The page may have changed, so this action was not done. This is the page now:',
@@ -291,7 +292,11 @@ const SKILL = {
 };
 const FORMAT_GUIDE = [
  'Format replies in Markdown; the app renders it richly and draws live, editable charts and diagrams.',
- '- Split longer answers into sections with ## or ### headings and keep headings short.',
+ '- This applies to every visible reply, including intermediate messages between tool calls, not only the final answer. Show useful findings with the same headings, emphasis, tables, callouts and native figures while work continues. Keep simple status updates short; do not add decoration or repeat an unchanged figure just to fill space.',
+ '- The built-in drawing engine is the default for requests such as "draw a chart", "make a graph", "show a diagram" or "visualize this": put the actual figure directly in the chat in a fenced mermaid block. It works without tools, files, dependencies or a browser server; do not create HTML, JavaScript, SVG files, Chart.js/Plotly pages, Python images or a local preview server merely to show a chart.',
+ '  Create an export, file, website, dashboard or runnable visualization code when the user explicitly asks for that artifact or implementation. That is a separate deliverable, not the default interpretation of asking for a graph; do not ask the user to choose an export format when an in-chat figure answers the request.',
+ '  Before a tool call, finish and close each figure\'s fence so it can be shown immediately. Draw progress from known findings, label estimates and illustrative data, and never fabricate results or completion percentages.',
+ '- Split longer answers into sections with ## or ### headings and keep headings short. The app automatically gives these headings different highlight colors and keeps them during continuation; use ordinary Markdown, not HTML, inline styles or hand-picked colors.',
  '- Use **bold** for key terms, lists for steps and options, tables for comparisons.',
  '- Never use horizontal rules (---) or decorative separators.',
  '- You must visualize: a text-only answer where something could be shown is a dry answer. Whenever something can be drawn, draw it: a chart or diagram beside the explanation, not a description of it.',
@@ -432,7 +437,8 @@ const remoteWords = turn => turn?.source === 'whatsapp' ? WHATSAPP : turn?.sourc
 // GPT models lean toward plain text. The last thing they read before answering asks them to look for the visual.
 const VISUAL_CHECK = [
  '# Before you answer',
- 'Check the reply against the formatting rules: OpenGhost is a visual app, and a text-only answer where a chart, a diagram, a wireframe or a files block fits is a worse answer.',
+ 'Check every visible reply, including intermediate messages before tools, against the formatting rules: OpenGhost is a visual app, and a text-only answer where a chart, a diagram, a wireframe or a files block fits is a worse answer.',
+ '- A direct request for a chart or diagram means a native fenced mermaid figure in this chat, not HTML or a preview server, unless the user explicitly requested a file, website, export or code. Useful progress findings can have the same colored ##/### headings and rich Markdown as the final answer; close each figure\'s fence before a tool call.',
  '- Files or folders in it: a files block. A document the user sent: facts, outline, checklist.',
  '- Numbers to compare, a trend or shares: a chart. A process, a plan, a structure or a history: a diagram. An interface or a page: a wireframe.',
  '- A few key numbers: metrics. Values against a norm: ranges. Steps to follow: steps. A plan by days: plan.',
@@ -742,6 +748,8 @@ class Conversation {
   this.record = record;
   this.folder = null;
   this.model = '';
+  this.effort = '';
+  this.speed = 'standard';
   this.messages = [];
   this.tokens = 0;
   // How many messages the latest request held, the system prompt's included (see Chat.seam).
@@ -758,6 +766,7 @@ class Conversation {
   this.scrollTop = 0;
   this.unread = false;
   this.ready = null;
+  window.MessageDates?.watch(this.list);
  }
 
  get id() {
@@ -821,6 +830,23 @@ class Chat {
   return !!this.active?.turn;
  }
 
+ get mode() { return this.modeOf(this.active); }
+
+ modeOf(conv) {
+  const mode = conv?.record?.mode || conv?.mode || this.settings.mode;
+  return ['ask', 'auto', 'full'].includes(mode) ? mode : 'ask';
+ }
+
+ setMode(mode) {
+  const conv = this.active;
+  if (!conv || conv.locked || !['ask', 'auto', 'full'].includes(mode)) return false;
+  conv.mode = mode;
+  if (conv.record) this.library.update(conv.id, { mode });
+  this.onModeChange(conv);
+  this.onChange();
+  return true;
+ }
+
  get model() {
   return this.modelOf(this.active);
  }
@@ -830,7 +856,45 @@ class Chat {
  }
 
  config(conv) {
-  return this.settings.configFor(this.modelOf(conv));
+  // Existing chats without the field keep their pre-update preference until it is migrated by load().
+  const preferred = conv?.record?.effort || conv?.effort || (conv?.record ? this.settings.legacyEffort : '') || '';
+  const config = this.settings.configFor(this.modelOf(conv), preferred);
+  const wanted = conv?.record?.speed || conv?.speed || 'standard';
+  return { ...config, speed: config.fast && wanted === 'fast' ? 'fast' : 'standard' };
+ }
+
+ get speed() { return this.config(this.active).speed; }
+
+ setSpeed(value) {
+  const conv = this.active;
+  if (!conv || conv.turn || conv.locked || !['standard', 'fast'].includes(value)) return false;
+  if (value === 'fast' && !this.config(conv).fast) return false;
+  if (conv.record) {
+   if (conv.record.speed === value) return true;
+   this.library.update(conv.id, { speed: value });
+  } else conv.speed = value;
+  this.onChange();
+  return true;
+ }
+
+ get effort() {
+  return this.config(this.active).effort;
+ }
+
+ setEffort(value) {
+  const conv = this.active;
+  if (!conv || conv.turn || conv.locked) return false;
+  const config = this.settings.configFor(this.modelOf(conv), value);
+  if (!config.efforts?.includes(value)) return false;
+  if (conv.record) {
+   if (conv.record.effort === value) return true;
+   this.library.update(conv.id, { effort: value });
+  } else {
+   if (conv.effort === value) return true;
+   conv.effort = value;
+  }
+  this.onChange();
+  return true;
  }
 
  // Whether the chat has turns no summary covers yet: a new model would need them compacted first.
@@ -862,7 +926,7 @@ class Chat {
   if (!conv?.record || conv.turn || id === this.modelOf(conv)) return;
   if (!this.hasHistory(conv)) { this.setModel(id); return; }
   const previous = this.modelOf(conv);
-  const turn = this.begin(conv, this.settings.configFor(this.summarizerFor(id, conv)));
+  const turn = this.begin(conv, this.settings.configFor(this.summarizerFor(id, conv), this.config(conv).effort));
   turn.switch = previous;
   this.library.update(conv.id, { model: id });
   this.settings.setModel(id);
@@ -944,19 +1008,27 @@ class Chat {
  }
 
  newDraft(list) {
-  return this.draft = new Conversation(null, list);
+  const draft = this.draft = new Conversation(null, list);
+  draft.mode = this.modeOf(draft);
+  draft.model = this.settings.resolve();
+  return draft;
  }
 
  newChat(folder = null) {
   const draft = this.draft || this.newDraft();
   draft.folder = folder;
-  draft.model = '';
+  draft.model = this.settings.resolve();
+  draft.effort = '';
+  draft.speed = 'standard';
   this.opening++;
   this.activate(draft);
   this.onChange();
  }
 
- open(id) {
+ open(id, { pane = false } = {}) {
+  if (this.workspace && !pane) return this.workspace.select(id);
+  const shown = this.workspace?.viewOfId(id);
+  if (shown && shown !== this) { this.workspace.focus(shown); return Promise.resolve(); }
   if (this.active?.id === id) return Promise.resolve();
   const token = ++this.opening;
   let conv = this.conversations.get(id);
@@ -974,6 +1046,8 @@ class Chat {
   return Promise.resolve(conv.ready).then(() => {
    clearTimeout(slow);
    if (token !== this.opening) return;
+   const shown = this.workspace?.viewOfId(id);
+   if (shown && shown !== this) { this.showWait(false); this.workspace.focus(shown); return; }
    this.activate(conv);
    this.onChange();
   });
@@ -1025,11 +1099,14 @@ class Chat {
 
  // A chat's messages come with the notes kept beside it; a mini chat has none of its own.
  load(conv) {
+  conv.mode = this.modeOf(conv);
   return Promise.all([this.library.conversation(conv.id), this.library.notes?.(conv.id), this.library.record?.(conv.id)]).then(([{ messages, tokens }, pad, brief]) => {
    conv.messages = messages;
    conv.tokens = tokens;
    conv.pad = pad || null;
    conv.brief = brief || '';
+   // Freeze the old application-wide preference once for a legacy chat. Never replace another chat's choice.
+   if (conv.record && !conv.record.effort && this.settings.legacyEffort) this.library.update(conv.id, { effort: this.settings.legacyEffort });
    this.restore(conv);
   });
  }
@@ -1057,6 +1134,8 @@ class Chat {
  }
 
  lock(id) {
+  const shown = this.workspace?.viewOfId(id);
+  if (shown && shown !== this) return shown.lock(id);
   const conv = this.conversations.get(id);
   if (!conv || conv.locked || !this.library.isProtected(id)) return;
   if (conv === this.active) this.onLeave?.(conv);
@@ -1066,6 +1145,8 @@ class Chat {
 
  // The password opens the chat; its messages are read again unless a reply still running kept them in memory.
  async unlock(id, password) {
+  const shown = this.workspace?.viewOfId(id);
+  if (shown && shown !== this) return shown.unlock(id, password);
   const conv = this.conversations.get(id);
   if (!conv?.locked) return true;
   if (!(await this.library.unlock(id, password))) return false;
@@ -1092,6 +1173,8 @@ class Chat {
 
  // Setting a password locks the chat straight away, so the first thing its owner does is open it with the new password.
  async protect(id, password) {
+  const shown = this.workspace?.viewOfId(id);
+  if (shown && shown !== this) return shown.protect(id, password);
   const conv = this.conversations.get(id);
   if (conv?.turn || conv?.locked) return false;
   const loaded = conv?.ready ? { messages: conv.messages, tokens: conv.tokens } : null;
@@ -1103,6 +1186,8 @@ class Chat {
  }
 
  async unprotect(id) {
+  const shown = this.workspace?.viewOfId(id);
+  if (shown && shown !== this) return shown.unprotect(id);
   const conv = this.conversations.get(id);
   if (!conv || conv.locked) return false;
   const done = await this.library.unprotect(id, conv.ready ? { messages: conv.messages, tokens: conv.tokens } : null);
@@ -1111,6 +1196,8 @@ class Chat {
  }
 
  remove(id) {
+  const shown = this.workspace?.viewOfId(id);
+  if (shown && shown !== this) return shown.remove(id);
   const conv = this.conversations.get(id), record = this.library.chat(id);
   if (conv) {
    this.abort(conv);
@@ -1151,6 +1238,7 @@ class Chat {
    // A protected chat locks again as soon as it is left.
    if (prev.record && !prev.locked && this.library.isProtected(prev.id)) this.seal(prev);
   }
+  if (this.workspace && conv.list.parentElement !== this.thread) conv.list.remove();
   this.attach(conv);
   this.syncForks(conv);
   this.active = conv;
@@ -1176,6 +1264,15 @@ class Chat {
   } else this.hold(conv, show);
   this.syncAsk();
   this.syncBottom();
+ }
+
+ // A conversation has one shared state and can be visible in one split pane at a time.
+ viewOf(conv) {
+  return this.workspace ? this.workspace.viewOf(conv) : this.active === conv ? this : null;
+ }
+
+ browserOf(conv = this.active) {
+  return conv?.turn?.browser || this.viewOf(conv)?.browser || this.browser || window.browserPanel;
  }
 
  // Holds the end of the chat in view. A card taller than the room over the composer (postStats) holds its own top in view
@@ -1207,15 +1304,15 @@ class Chat {
   }
   if (!conv.record) {
    conv.record = this.library.create({ folder: conv.folder, text, attachments });
-   this.library.update(conv.id, { model: this.modelOf(conv) });
+   this.library.update(conv.id, { model: this.modelOf(conv), effort: config.effort, speed: config.speed, mode: this.modeOf(conv) });
    this.conversations.set(conv.id, conv);
    if (this.library.notes) conv.pad = { items: [], next: 1 };
    this.draft = null;
   } else {
-   this.library.update(conv.id, { updated: Date.now() });
+   this.library.update(conv.id, { updated: Date.now(), ...(!conv.record.effort ? { effort: config.effort } : {}) });
   }
   for (const actions of conv.list.querySelectorAll('.message-actions')) actions.remove();
-  const prompt = { text, attachments };
+  const prompt = { text, attachments, at: window.MessageDates?.now() ?? Date.now() };
   this.follow = true;
   if (conv.turn) {
    this.interject(conv, prompt);
@@ -1245,12 +1342,11 @@ class Chat {
   conv.ask?.settle(TOOL_NOTES.cancelled);
  }
 
- onModeChange() {
-  const mode = this.settings.mode;
-  for (const conv of this.conversations.values()) {
-   for (const pending of conv.turn?.approvals || []) {
-    if (!AgentTools.needsApproval(pending.name, pending.args, { mode, cwd: pending.cwd, attached: this.attachedFiles(conv), apart: pending.apart })) pending.card.settle('allow');
-   }
+ onModeChange(conv = this.active) {
+  if (!conv) return;
+  const mode = this.modeOf(conv);
+  for (const pending of conv.turn?.approvals || []) {
+   if (!AgentTools.needsApproval(pending.name, pending.args, { mode, cwd: pending.cwd, attached: this.attachedFiles(conv), apart: pending.apart, panel: pending.panel })) pending.card.settle('allow');
   }
  }
 
@@ -1388,12 +1484,12 @@ class Chat {
 
  begin(conv, config) {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  return conv.turn = { id, controller: new AbortController(), config, part: null, parts: [], next: null, queue: [], pills: [], approvals: new Set(), tool: '', text: false, writing: false };
+  return conv.turn = { id, controller: new AbortController(), config, browser: this.browserOf(conv), part: null, parts: [], next: null, queue: [], pills: [], approvals: new Set(), tool: '', text: false, writing: false, retryBudget: { used: 0 }, reconnecting: false };
  }
 
  run(conv, prompt, config, bubble) {
   const turn = this.begin(conv, config);
-  const entry = { role: 'user', text: prompt.text, attachments: prompt.attachments.map(slim), content: prompt.text };
+  const entry = { role: 'user', text: prompt.text, attachments: prompt.attachments.map(slim), content: prompt.text, at: prompt.at ?? Date.now() };
   conv.messages.push(entry);
   if (bubble) this.nodes.set(entry, bubble);
   this.openPart(conv, turn);
@@ -1500,8 +1596,11 @@ class Chat {
    await this.takeQueue(conv, turn);
   }
   for (;;) {
+   turn.controller.signal.throwIfAborted();
    await this.compactIfNeeded(conv, turn);
-   const { part, calls, finish } = await this.request(conv, turn);
+   const response = await this.request(conv, turn);
+   if (!response) continue; // A temporary stream failure opened the next part of this same turn.
+   const { part, calls, finish } = response;
    const images = [];
    let told = false;
    for (const call of calls) {
@@ -1581,10 +1680,10 @@ class Chat {
  notes(conv, messages) {
   if (!this.agent(conv)) return [];
   const told = head => messages.findLast(message => message.role === 'user' && typeof message.content === 'string' && message.content.startsWith(head))?.content || '';
-  const out = [], state = `${TOOL_NOTES.state}\n${AgentPrompt.state({ mode: this.settings.mode })}`;
+  const out = [], state = `${TOOL_NOTES.state}\n${AgentPrompt.state({ mode: this.modeOf(conv) })}`;
   if (state !== told(TOOL_NOTES.state)) out.push({ role: 'user', content: state });
   // A browser that holds nothing gets no note, unless an earlier note says it held something.
-  const held = window.browserPanel?.context(this.seat(conv)) || '', before = told(TOOL_NOTES.browser);
+  const held = this.browserOf(conv)?.context(this.seat(conv)) || '', before = told(TOOL_NOTES.browser);
   const browser = held || before ? `${TOOL_NOTES.browser}\n${held || TOOL_NOTES.browserEmpty}` : '';
   if (browser && browser !== before) out.push({ role: 'user', content: browser });
   // The user's notepad, the same way: an empty one gets no note, unless an earlier note says it held something.
@@ -1630,7 +1729,7 @@ class Chat {
  // The agent that works in a tab of the browser of its own, apart from the one on screen: a chat's agent works in the tab
  // on screen, unless the agent of another chat is at work there (BrowserPanel.seatOf).
  seat(conv) {
-  return window.browserPanel?.seatOf(conv) || null;
+  return this.browserOf(conv)?.seatOf(conv) || null;
  }
 
  // What this conversation's agent is doing, in the user's own words: the latest thing they asked of it.
@@ -1699,7 +1798,7 @@ class Chat {
   messages.push(...notes);
   // What was sent stays in the chat with the reply to it, the notes included, and the next request is told where this one ended.
   const keep = step => {
-   part.entry.steps.push(...notes, step);
+   part.entry.steps.push(...notes, ...(step ? [step] : []));
    conv.sent = messages.length;
   };
   let result;
@@ -1709,6 +1808,7 @@ class Chat {
     tools: this.agent(conv) ? this.toolSchemas() : null,
     signal: turn.controller.signal,
     session: this.session(conv),
+    retryBudget: turn.retryBudget ||= { used: 0 },
     onContent: (delta, stream) => {
      if (!stream.content.trim()) return;
      turn.text = true;
@@ -1722,18 +1822,70 @@ class Chat {
     onRetry: () => this.showRetry(view),
    });
   } catch (error) {
-   if (error.partial?.content) keep(assistantStep({ ...error.partial, toolCalls: [] }));
+   // Only plain visible text is safe to keep from a failed stream. Its tool arguments and signed/native thinking
+   // may be incomplete; completed blocks from earlier successful requests stay in history unchanged.
+   const content = error.partial?.content || '';
+   keep(content.trim() ? assistantStep({ content }) : null);
+   if (content.trim()) {
+    turn.text = true;
+    part.entry.content = join(base, content);
+    view.stream.push(part.entry.content);
+   }
+   conv.tokens = estimate(messages) + estimate(content ? [{ role: 'assistant', content }] : []);
+   turn.writing = false;
+   if (await this.reconnect(conv, turn, error)) return null;
    throw error;
   } finally {
    turn.writing = false;
+  }
+  // Some compatible services deliver text in the terminal packet only. Keep that text visible too, including
+  // native figures before a tool call; streaming deltas remain the normal path.
+  if (typeof result.content === 'string' && result.content.trim()) {
+   turn.text = true;
+   const content = join(base, result.content);
+   if (content !== part.entry.content) {
+    part.entry.content = content;
+    this.dismissGhost(view);
+    view.stream.push(content);
+   }
   }
   keep(assistantStep(result));
   spend(part.entry, result.usage);
   const usage = result.usage;
   conv.tokens = usage ? usage.total_tokens || usage.prompt_tokens + usage.completion_tokens : estimate(messages) + estimate([part.entry.steps.at(-1)]);
   const calls = part.entry.steps.at(-1).tool_calls || [];
-  if (calls.length) this.showGhost(turn.next || view);
+  if (calls.length) {
+   view.stream.checkpoint?.();
+   this.showGhost(turn.next || view);
+  }
   return { part, calls, finish: result.finishReason };
+ }
+
+ // Called only for Providers.stream failures, never for tool, compaction or storage errors. Waiting keeps the
+ // current turn/controller alive, so End, queued recommendations and other conversations keep their normal behavior.
+ async reconnect(conv, turn, error) {
+  try {
+   const again = await Providers.retry(turn.config, error, {
+    signal: turn.controller.signal,
+    retryBudget: turn.retryBudget,
+    onRetry: () => {
+     turn.reconnecting = true;
+     turn.part.view.stream.checkpoint?.();
+     this.save(conv);
+     this.showRetry(turn.next || turn.part.view);
+    },
+   });
+   if (!again) return false;
+   turn.controller.signal.throwIfAborted();
+   const step = { role: 'user', content: TOOL_NOTES.reconnect };
+   turn.part.entry.steps.push(step);
+   conv.tokens += estimate([step]);
+   await this.takeQueue(conv, turn);
+   this.save(conv);
+   return true;
+  } finally {
+   turn.reconnecting = false;
+  }
  }
 
  async useTool(conv, turn, view, call) {
@@ -1767,10 +1919,18 @@ class Chat {
   const refused = shared && this.sharedRefusal(conv, cwd, shared);
   if (refused) return refused;
   let apart = this.seat(conv), allowed = false;
-  if (AgentTools.needsApproval(name, args, { mode: turn.mode || this.settings.mode, cwd, attached: this.attachedFiles(conv), apart })) {
+  const browserPanel = this.browserOf(conv);
+  const mode = turn.mode || this.modeOf(conv);
+  let asks = AgentTools.needsApproval(name, args, { mode, cwd, attached: this.attachedFiles(conv), apart, panel: browserPanel });
+  if (asks && mode === 'ask') {
+   const rule = AgentTools.approvalRule?.(name, args, { cwd, apart, panel: browserPanel });
+   // Missing, locked or unreadable storage never grants access. Read on every step so a reset applies at once.
+   if (rule && this.library.permissions) asks = !(await this.library.permissions(conv.id).catch(() => [])).includes(rule.key);
+  }
+  if (asks) {
    if (turn.remote) return remoteWords(turn).denied;
    if (turn.queue.length) return TOOL_NOTES.message;
-   const answer = await this.approve(conv, turn, view, { name, args, cwd, apart });
+   const answer = await this.approve(conv, turn, view, { name, args, cwd, apart, panel: browserPanel });
    if (answer !== 'allow') return answer === 'deny' ? TOOL_NOTES.declined : answer;
    allowed = true;
   }
@@ -1790,7 +1950,7 @@ class Chat {
   this.showGhost(turn.next || view);
   // What the step does, in the line beside the ghost; the next step's words take its place (agent-line.js).
   AgentLine.show((turn.next || view).status, AgentLine.deed(name, args, cwd, apart));
-  const panel = name.startsWith('browser_') ? window.browserPanel : null;
+  const panel = name.startsWith('browser_') ? browserPanel : null;
   // While the user has the browser the agent waits for it: the note to answer with if the wait ended some other way
   // than by Hand back, '' once the browser is the agent's again.
   const yielded = async () => {
@@ -1806,6 +1966,7 @@ class Chat {
   let handed = '';
   if (panel) {
    // Where it works is settled at its first step in the browser: another chat's agent may have begun there meanwhile.
+   turn.browser = panel;
    apart = this.seat(conv);
    panel.drive(conv, true, !!apart);
    if (panel.userHolds(apart)) {
@@ -1821,7 +1982,7 @@ class Chat {
   try {
    if (shared) return await this.runShared(conv, turn, view, { name, args, id, cwd, apart, shared, stopped });
    if (!handed) {
-    const done = await Promise.race([AgentTools.run(name, args, { id, cwd, apart, ticket }), stopped]);
+    const done = await Promise.race([AgentTools.run(name, args, { id, cwd, apart, ticket, panel }), stopped]);
     // A change made to a file is shown a moment under the ghost's line, then folds away (agent-line.js).
     if (name === 'edit_file' && typeof done === 'string' && done.startsWith('Edited ')) this.glanceEdit(turn.next || view, args);
     // Take control in the middle of the step: the step was cut, and the agent waits for the browser as above.
@@ -1830,7 +1991,7 @@ class Chat {
     if (note) return note;
     handed = TOOL_NOTES.cutShort;
    }
-   const now = await Promise.race([AgentTools.run('browser_snapshot', {}, { id, cwd, apart }), stopped]);
+   const now = await Promise.race([AgentTools.run('browser_snapshot', {}, { id, cwd, apart, panel }), stopped]);
    return now === TOOL_NOTES.cancelled ? now : `${handed}\n\n${now}`;
   } catch (error) {
    return `Error: ${error.message}`;
@@ -1882,7 +2043,7 @@ class Chat {
  // A picture from the built-in browser, for show_pictures: of an element, of a part of the screen or of all of it.
  // Only looking: nothing on the page is touched, and the user may hold the browser meanwhile.
  async browserPicture(conv, turn, item, { cwd, apart }) {
-  const panel = window.browserPanel;
+  const panel = this.browserOf(conv);
   if (!panel || !panel.current(apart)) return { error: PICTURES.noBrowser };
   const args = { chat: conv.id, sealed: this.library.isProtected(conv.id) };
   for (const key of ['ref', 'x', 'y', 'width', 'height']) if (item[key] !== undefined && item[key] !== null && item[key] !== '') args[key] = item[key];
@@ -1903,7 +2064,7 @@ class Chat {
    this.syncAsk();
    this.onPlan?.(conv);
    // Asked in a chat that is not on screen: its row is marked, as for a reply that came in.
-   if (conv !== this.active && conv.record && this.library.chat(conv.id)) this.library.update(conv.id, { unread: true });
+   if (!this.viewOf(conv) && conv.record && this.library.chat(conv.id)) this.library.update(conv.id, { unread: true });
    // The agent now waits for the user: one who is not looking is told so, as of a finished reply.
    this.replied(conv, I18n.t('notify.asks', { text: questions[0].question }));
   });
@@ -1939,19 +2100,25 @@ class Chat {
  async approve(conv, turn, view, request) {
   this.dismissGhost(view);
   if (turn.next) this.dismissGhost(turn.next);
-  const about = AgentTools.describe(request.name, request.args, request.cwd, request.apart), card = new ApprovalCard(about);
+  const about = AgentTools.describe(request.name, request.args, request.cwd, request.apart, request.panel);
+  const rule = this.modeOf(conv) === 'ask' ? AgentTools.approvalRule?.(request.name, request.args, { cwd: request.cwd, apart: request.apart, panel: request.panel }) : null;
+  const always = rule && this.library.allowPermission ? { hint: rule.hint, save: async () => {
+   const saved = await this.library.allowPermission(conv.id, rule.key, turn.controller.signal);
+   if (!saved) throw new Error('The permission could not be saved');
+  } } : null;
+  const card = new ApprovalCard({ ...about, always });
   const pending = { ...request, card }, deck = !!this.main.querySelector('.composer');
   if (!deck) view.el.append(card.el);
   // The agent now waits for the user's OK: one who is not looking is told so, once while its steps wait together.
   if (!turn.approvals.size) this.replied(conv, I18n.t('notify.approve', { text: about.title }));
   turn.approvals.add(pending);
-  if (deck) this.syncAsk();
+  if (deck) (this.viewOf(conv) || this).syncAsk();
   this.onPlan?.(conv);
-  if (conv === this.active) this.followBottom();
+  this.viewOf(conv)?.followBottom();
   const answer = await card.answer;
   turn.approvals.delete(pending);
   this.onPlan?.(conv);
-  if (deck) this.syncAsk();
+  if (deck) (this.viewOf(conv) || this).syncAsk();
   else card.dismiss();
   return answer;
  }
@@ -1963,7 +2130,7 @@ class Chat {
   this.closePart(conv, old);
   this.postPills(conv, turn, old.view.el);
   for (const { prompt, bubble } of queued) {
-   const entry = { role: 'user', text: prompt.text };
+   const entry = { role: 'user', text: prompt.text, at: prompt.at ?? Date.now() };
    await this.compose(conv, entry, prompt);
    conv.messages.push(entry);
    this.nodes.set(entry, bubble);
@@ -1977,9 +2144,10 @@ class Chat {
   view ||= this.assistantMessage(conv);
   if (!view.el.isConnected) conv.list.append(view.el);
   // Each part of a reply notes the model that wrote it, for the chat's stats and for a model that later takes over.
-  const entry = { role: 'assistant', content: '', steps: [], turn: turn.id, model: turn.config.id };
+  const entry = { role: 'assistant', content: '', steps: [], turn: turn.id, model: turn.config.id, at: window.MessageDates?.now() ?? Date.now() };
   conv.messages.push(entry);
   view.el.__entry = entry;
+  window.MessageDates?.mark(view.el, entry.at);
   turn.part = { view, entry };
   turn.parts.push(turn.part);
  }
@@ -1989,7 +2157,8 @@ class Chat {
   if (!entry.steps.length && !entry.content) drop(conv.messages, entry);
   view.stream.finish().then(() => {
    view.el.classList.remove('is-streaming');
-   if (!entry.content.trim()) collapse(view.el);
+   if (entry.content.trim()) view.showTools?.(entry.at);
+   else collapse(view.el);
   });
  }
 
@@ -2003,12 +2172,12 @@ class Chat {
    this.library.update(conv.id, { model: turn.switch });
    this.settings.setModel(turn.switch);
   }
-  window.browserPanel?.drive(conv, false);
+  (turn.browser || this.browserOf(conv))?.drive(conv, false);
   if (!entry.steps.length) drop(conv.messages, entry);
   this.postPills(conv, turn, view.el);
   if (turn.next) collapse(turn.next.el);
   const queued = turn.queue.splice(0).map(({ prompt, bubble }) => {
-   const item = { role: 'user', text: prompt.text, attachments: prompt.attachments.map(slim), content: prompt.text };
+   const item = { role: 'user', text: prompt.text, attachments: prompt.attachments.map(slim), content: prompt.text, at: prompt.at ?? Date.now() };
    conv.messages.push(item);
    this.nodes.set(item, bubble);
    QueuedRing.lift(bubble);
@@ -2019,7 +2188,7 @@ class Chat {
    this.save(conv);
    if (turn.text && !conv.record.named) this.name(conv, turn.config);
   }
-  if (conv !== this.active) {
+  if (!this.viewOf(conv)) {
    conv.unread = true;
    if (conv.record && this.library.chat(conv.id)) this.library.update(conv.id, { unread: true });
   }
@@ -2029,20 +2198,24 @@ class Chat {
   view.el.classList.remove('is-streaming');
   const text = !!entry.content.trim();
   let noted = true;
-  if (error && !aborted) this.fail(conv, view, error);
-  else if (turn.quiet) noted = false;
+  if (error && !aborted) {
+   // A summary-only turn keeps its empty answer hidden until it has a real error to show.
+   view.el.hidden = false;
+   this.fail(conv, view, error);
+  } else if (turn.quiet) noted = false;
   else if (aborted) this.note(view, I18n.t('chat.stopped'));
   else if (FINISH_NOTES.includes(finish)) this.note(view, I18n.t(`finish.${finish}`));
   else if (!turn.text) this.note(view, I18n.t('chat.empty'));
   else noted = false;
   const last = text ? view : turn.parts.findLast(item => item.entry.content.trim() && item.view.el.isConnected)?.view;
   if (last) {
-   const tools = this.toolbar(), box = last === view && view.el.querySelector('.message-error, .message-note');
+   const tools = last.el.querySelector('.message-tools') || this.toolbar(true, last.el.__entry?.at), box = last === view && view.el.querySelector('.message-error, .message-note');
    if (box) box.before(tools);
    else last.el.append(tools);
   }
   if (!text && !noted) collapse(view.el);
-  if (conv === this.active) this.followBottom();
+  window.MessageDates?.sync(conv.list);
+  this.viewOf(conv)?.followBottom();
   // A protected chat left while it was replying locks fully once the reply is saved.
   if (conv.locked && !conv.turn) this.seal(conv);
   // An agent that stopped to wait for the user, for its plan's sake, is told of as waiting, whatever its reply says.
@@ -2147,7 +2320,7 @@ class Chat {
    if (first?.isConnected) first.before(notice);
    else turn.part.view.el.before(notice);
   }
-  if (conv === this.active) this.followBottom();
+  this.viewOf(conv)?.followBottom();
   let summary = '', cost = null;
   try {
    // A later summary reads the previous summary and what was said after it, not the messages that summary already folded.
@@ -2160,7 +2333,11 @@ class Chat {
     onUsage: usage => { cost = usage; },
    });
   } catch (error) {
-   if (error.name === 'AbortError') { this.finishNotice(notice, false); throw error; }
+   // Never continue with another request to the same unavailable model after a failed summary. Let end() release
+   // the turn, expose the provider error and roll back a failed model switch, with the original history intact.
+   if (middle && error.name !== 'AbortError') this.openPart(conv, turn);
+   this.finishNotice(notice, false);
+   throw error;
   }
   if (middle) this.openPart(conv, turn);
   if (!summary) {
@@ -2431,8 +2608,9 @@ class Chat {
   while (conv.turn) await new Promise(resolve => setTimeout(resolve, 1500));
   if (!this.library.chat(item.chat) || conv.locked) return;
   const config = this.routineConfig(conv, item);
-  const entry = { role: 'user', text: item.text, attachments: [], content: ROUTINE.run(item, at), routine: { id: item.id, at } };
+  const entry = { role: 'user', text: item.text, attachments: [], content: ROUTINE.run(item, at), routine: { id: item.id, at }, at: window.MessageDates?.now() ?? Date.now() };
   const el = RoutinePill.build({ kind: 'ran', routine: item.id, at, text: item.text });
+  window.MessageDates?.mark(el, entry.at);
   this.attach(conv);
   conv.list.append(el);
   this.nodes.set(entry, el);
@@ -2457,7 +2635,7 @@ class Chat {
   conv.messages.push(entry);
   this.openPart(conv, turn);
   this.onChange();
-  if (conv === this.active) this.followBottom();
+  this.viewOf(conv)?.followBottom();
   await this.drive(conv, turn);
  }
 
@@ -2665,7 +2843,7 @@ class Chat {
   const card = new SkillCard(skill);
   view.el.append(card.el);
   turn.skillCard = card;
-  if (conv === this.active) this.followBottom();
+  this.viewOf(conv)?.followBottom();
   const answer = await card.answer;
   turn.skillCard = null;
   card.dismiss();
@@ -3052,7 +3230,7 @@ class Chat {
    else conv.list.append(el);
    after = el;
    (entry.role === 'memory' ? MemoryPill : entry.role === 'asked' ? AskRecord : entry.role === 'routine' ? RoutinePill : entry.role === 'skill' ? SkillPill : NotePill).enter(el);
-   if (conv === this.active) this.followBottom();
+   this.viewOf(conv)?.followBottom();
   }
  }
 
@@ -3185,6 +3363,7 @@ class Chat {
    this.nodes.set(entry, el);
   }
   this.syncPills(conv);
+  window.MessageDates?.sync(conv.list);
   MessageFold.settle(conv.list);
   settle(conv.list);
  }
@@ -3200,7 +3379,11 @@ class Chat {
  // to be drawn.
  entryView(entry, last, later = false) {
   // A routine's run is the app's message, not the user's: it stands as the routine's pill.
-  if (entry.role === 'user' && entry.routine) return RoutinePill.build({ kind: 'ran', routine: entry.routine.id, at: entry.routine.at, text: entry.text });
+  if (entry.role === 'user' && entry.routine) {
+   const el = RoutinePill.build({ kind: 'ran', routine: entry.routine.id, at: entry.routine.at, text: entry.text });
+   window.MessageDates?.mark(el, entry.at ?? entry.routine.at);
+   return el;
+  }
   if (entry.role === 'user') return this.userMessage(this.promptOf(entry));
   if (entry.role === 'compact') return this.compactNotice(false, null, entry.count);
   if (entry.role === 'fork') return this.forkNotice(entry);
@@ -3224,7 +3407,7 @@ class Chat {
   const attachments = (entry.attachments || []).map(item => ({
    ...item, info: FileKinds.describe(item.name), url: item.image ? urls[k++] || '' : item.video?.poster || '', duration: item.video?.duration || 0,
   }));
-  return { text: entry.text || '', attachments };
+  return { text: entry.text || '', attachments, at: entry.at };
  }
 
  restoredMessage(entry, last = true, later = false) {
@@ -3247,16 +3430,20 @@ class Chat {
    };
   } else StreamView.render(content, entry.content);
   el.__entry = entry;
-  if (last) el.append(this.toolbar());
+  window.MessageDates?.mark(el, entry.at);
+  el.append(this.toolbar(true, entry.at));
   return el;
  }
 
  // Under a message: Copy, and in a chat of the app's window, Fork from here. `copy`: whether there are words to copy.
- toolbar(copy = true) {
+ toolbar(copy = true, at = null) {
   const tools = document.createElement('div');
   tools.className = 'message-tools';
-  tools.innerHTML = (copy ? `<button class="md-copy message-copy" type="button" aria-label="${I18n.t('message.copy')}">${Markdown.COPY_ICON}</button>` : '')
+  const buttons = (copy ? `<button class="md-copy message-copy" type="button" aria-label="${I18n.t('message.copy')}">${Markdown.COPY_ICON}</button>` : '')
    + (this.forkable ? `<button class="md-copy message-fork" type="button" aria-label="${I18n.t('message.fork')}" title="${I18n.t('message.fork')}">${Glyphs.fork}</button>` : '');
+  tools.innerHTML = buttons ? `<span class="message-tool-actions">${buttons}</span>` : '';
+  const time = window.MessageDates?.time(at);
+  if (time) tools.prepend(time);
   return tools;
  }
 
@@ -3438,7 +3625,7 @@ class Chat {
   if (!conv.messages.includes(view.el.__entry)) view.el.remove();
   if (conv === this.active) this.follow = true;
   this.resume(conv, config);
-  if (conv === this.active) this.followBottom();
+  this.viewOf(conv)?.followBottom();
  }
 
  note(view, text) {
@@ -3457,7 +3644,7 @@ class Chat {
   return button;
  }
 
- userMessage({ text, attachments }) {
+ userMessage({ text, attachments, at }) {
   const el = document.createElement('div');
   el.className = 'message is-user';
   // A video sent the moment it was added may still be having its frame taken: the attachments come in once it is there.
@@ -3485,10 +3672,9 @@ class Chat {
    MessageFold.watch(bubble);
    el.append(bubble);
   }
-  if (text) {
-   el.append(this.toolbar());
-   el.__entry = { content: text };
-  } else if (this.forkable) el.append(this.toolbar(false));
+  el.append(this.toolbar(!!text, at));
+  el.__entry = { content: text, at };
+  window.MessageDates?.mark(el, at);
   return el;
  }
 
@@ -3540,7 +3726,9 @@ class Chat {
   el.className = 'message is-assistant is-streaming';
   el.innerHTML = '<div class="message-status"><ghost-thinking></ghost-thinking></div><div class="message-content markdown"></div>';
   const content = el.querySelector('.message-content');
-  return { el, status: el.querySelector('.message-status'), content, stream: new StreamView(content, { onChange: () => { if (conv === this.active) this.followBottom(); } }) };
+  return { el, status: el.querySelector('.message-status'), content, stream: new StreamView(content, { onChange: () => { this.viewOf(conv)?.followBottom(); } }),
+   showTools: at => { if (!el.querySelector('.message-tools')) el.append(this.toolbar(true, at)); },
+  };
  }
 }
 
@@ -3577,9 +3765,9 @@ function movedNotice() {
 // chat's own, the same system prompt and the same history, so the provider serves that part from the cache the chat has
 // already paid for; the mini chat's own words come after it.
 class SideChat extends Chat {
- constructor({ library, origin, model, ...options }) {
+ constructor({ library, origin, model, effort = '', ...options }) {
   const state = { seen: 0 };
-  const record = { id: origin.id, title: '', folder: origin.record.folder, created: 0, updated: 0, pinned: false, named: true, model };
+  const record = { id: origin.id, title: '', folder: origin.record.folder, created: 0, updated: 0, pinned: false, named: true, model, effort: effort || origin.record.effort || origin.effort || '', speed: origin.record.speed || origin.speed || 'standard', mode: origin.record.mode || origin.mode || options.settings.mode };
   if (library.isHome(origin.record)) record.space = origin.record.space;
   if (origin.record.session) record.session = origin.record.session;
   super({ ...options, library: {
@@ -3587,8 +3775,8 @@ class SideChat extends Chat {
    chats: [record],
    chat: id => id === record.id ? record : null,
    update: (id, changes) => id === record.id ? Object.assign(record, changes) : null,
-   conversation: id => library.side(id).then(body => { state.seen = body.seen; return body; }),
-   saveMessages: (id, messages, tokens) => library.saveSide(id, { messages, tokens, seen: state.seen }),
+   conversation: id => library.side(id).then(body => { state.seen = body.seen; if (body.effort) record.effort = body.effort; if (body.speed) record.speed = body.speed; if (body.mode) record.mode = body.mode; return body; }),
+   saveMessages: (id, messages, tokens) => library.saveSide(id, { messages, tokens, seen: state.seen, effort: record.effort, speed: record.speed, mode: record.mode }),
    clear: id => library.clearSide(id),
    isProtected: () => false,
    // The chat the mini chat is opened over may be protected, and then so is what is said here.
@@ -3600,6 +3788,9 @@ class SideChat extends Chat {
    // The same private record as the chat this mini chat belongs to. Another chat's mini chat has its own origin, so it never reaches this one.
    record: () => library.record(origin.id),
    saveRecord: (_id, text) => library.saveRecord(origin.id, text),
+   // The mini chat shares only its own main chat's ASK exceptions.
+   permissions: () => library.permissions(origin.id),
+   allowPermission: (_id, rule, signal) => library.allowPermission(origin.id, rule, signal),
   } });
   this.state = state;
   this.origin = origin;
@@ -3607,8 +3798,29 @@ class SideChat extends Chat {
   this.driving = null;
  }
 
+ setMode(value) {
+  if (!super.setMode(value)) return false;
+  const conv = this.active;
+  if (conv?.record) this.library.saveMessages(conv.id, conv.messages, conv.tokens);
+  return true;
+ }
+
+ setEffort(value) {
+  if (!super.setEffort(value)) return false;
+  const conv = this.active;
+  if (conv?.record) this.library.saveMessages(conv.id, conv.messages, conv.tokens);
+  return true;
+ }
+
  get hasMessages() {
   return !!this.active?.record && this.active.messages.some(entry => entry.role === 'user');
+ }
+
+ setSpeed(value) {
+  if (!super.setSpeed(value)) return false;
+  const conv = this.active;
+  if (conv?.record) this.library.saveMessages(conv.id, conv.messages, conv.tokens);
+  return true;
  }
 
  // A mini chat is forked along with its chat, not on its own.

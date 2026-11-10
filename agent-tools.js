@@ -155,9 +155,22 @@ const SCHEMAS = [
   amount: { type: 'number', description: 'How many screens, 0.8 by default' },
   ref: { type: 'integer', description: 'Scroll this element into view instead' },
  }),
- fn('browser_screenshot', 'Look at the page in the built-in browser yourself: returns a picture of the screen, or of the page from the top with full_page. Use it when layout, images, colors, charts or the look of a site you build matter, or when the snapshot is not enough.', {
-  full_page: { type: 'boolean', description: 'The page from the top, up to four screens tall' },
+ fn('browser_screenshot', 'Capture the page in the built-in browser, not the desktop or app frame. Returns an inline preview. To attach the screenshot on a website, pass save_to: it creates a new normal unencrypted PNG file at original resolution and reports its path. Does not change app/page zoom or window size. Choose the viewport, full_page, a visible element ref, or a rectangle.', {
+  full_page: { type: 'boolean', description: 'The page from the top, up to four screens tall; not together with a ref or rectangle' },
+  save_to: { type: 'string', minLength: 1, description: 'New .png file path, relative to the project folder or absolute. Existing files are never overwritten' },
+  ref: { type: 'integer', description: 'Capture this visible element from the latest snapshot without scrolling it' },
+  x: { type: 'number', description: 'Left of a rectangle in visible-page pixels, not desktop pixels; provide all four rectangle values' },
+  y: { type: 'number', description: 'Top of a rectangle in visible-page pixels' },
+  width: { type: 'number', description: 'Width of the rectangle in page pixels' },
+  height: { type: 'number', description: 'Height of the rectangle in page pixels' },
+  description: PURPOSE('screenshot file'),
  }),
+ fn('browser_upload', 'Select local files in this browser page for an attachment or upload. Pass a file input ref from the latest snapshot, including a hidden input; or omit ref after browser_click opened an attachment file chooser. Files may be transferred to the site immediately on selection. Use only files and destinations authorized by the user. This tool does not press Send: inspect the attachment preview and then use the normal browser controls to finish the user\'s sending task. Do not type a file path into a native dialog or change app zoom.', {
+  paths: { type: 'array', minItems: 1, maxItems: 10, items: { type: 'string' }, description: '1 to 10 local file paths, relative to the project folder or absolute; no URLs, folders or internal application data. At most 100 MiB each and 200 MiB total' },
+  ref: { type: 'integer', description: 'The file input [number] from the latest snapshot. Omit only for the file chooser opened by your last attachment click' },
+  replace: { type: 'boolean', description: 'true replaces files already selected in that input. Omit unless the user wants the current selection replaced' },
+  description: PURPOSE('file upload'),
+ }, ['paths']),
  fn('browser_read', 'Read the whole text of the page open in the built-in browser, with headings, lists and links, as the user sees it: signed in and after scripts ran. Long pages come in parts, pass start to read further.', {
   start: { type: 'integer', description: 'Character to start from when reading further' },
  }),
@@ -267,7 +280,9 @@ const RISKY_CLICK = /\b(buy|purchase|order|checkout|check out|pay|payment|subscr
 // tab of its own (a mini chat's).
 const MAIN = {};
 const seen = new Map();
-const refsOf = apart => seen.get(apart || MAIN) || {};
+const browserPages = new Map();
+const keyOf = (apart, panel) => apart || (panel && panel !== window.browserPanel ? panel : MAIN);
+const refsOf = (apart, panel) => seen.get(keyOf(apart, panel)) || {};
 
 const READ_GIT = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'blame', 'shortlog', 'describe', 'grep', 'help', 'version']);
 const LIST_GIT = { branch: /^(-a|-r|-v|-vv|--list|--all|--show-current|--no-color)$/, remote: /^(-v|--verbose)$/, tag: /^(-l|--list)$/ };
@@ -758,11 +773,13 @@ function host(url) {
  try { return new URL(/^[a-z]+:\/\//i.test(url) ? url : `https://${url}`).host.replace(/^www\./, ''); } catch { return String(url); }
 }
 
-function browserApproval(name, args, ask, apart) {
+function browserApproval(name, args, ask, apart, cwd, panel = null) {
+ if (name === 'browser_upload') return true; // Full access returned false before this policy; ASK/AUTO approve external transfer.
+ if (name === 'browser_screenshot' && args.save_to !== undefined) return ask || !inside(cwd, args.save_to);
  if (BROWSER_FREE.has(name)) return false;
  if (name === 'browser_tabs') return ask && args.action === 'new' && !!args.url;
  if (ask) return true;
- const target = refsOf(apart)[args.ref] || '';
+ const target = refsOf(apart, panel)[args.ref] || '';
  if (name === 'browser_click') return /^(button|link|clickable|menuitem|option)\b/.test(target) && RISKY_CLICK.test(target);
  return false;
 }
@@ -779,12 +796,12 @@ function attachedFile(attached, cwd, path) {
 // The pictures a show_pictures call asks for, as objects whatever came.
 const pictureList = args => (Array.isArray(args?.pictures) ? args.pictures : []).filter(item => item && typeof item === 'object');
 
-function needsApproval(name, args, { mode, cwd, attached = [], apart = null }) {
+function needsApproval(name, args, { mode, cwd, attached = [], apart = null, panel = null }) {
  // What clicks and types on the computer is always the user's decision: no mode makes it silent.
  if (AUTOMATION_INPUT.has(name)) return true;
  if (mode === 'full') return false;
  const ask = mode !== 'auto';
- if (name.startsWith('browser_')) return browserApproval(name, args, ask, apart);
+ if (name.startsWith('browser_')) return browserApproval(name, args, ask, apart, cwd, panel);
  const videos = Array.isArray(attached) ? attached : attached.videos || [], pdfs = Array.isArray(attached) ? [] : attached.pdfs || [];
  switch (name) {
   case 'read_file':
@@ -809,6 +826,56 @@ function needsApproval(name, args, { mode, cwd, attached = [], apart = null }) {
  }
 }
 
+// An ASK exception is a tool kind, never a change of mode. Shell and git match the exact request and working folder;
+// file writes stay in the project (or at the one outside file). Sensitive browser actions still ask every time.
+const ALWAYS_READ = new Set(['read_file', 'list_files', 'pdf_pages', 'web_search', 'fetch_url', 'find_media', 'show_pictures']);
+function approvalRule(name, args, { cwd = '', apart = null, panel = null } = {}) {
+ const rule = (scope = '', hint = 'kind') => ({ key: JSON.stringify([name, scope]), hint: I18n.t(`approve.always.${hint}`) });
+ const pathScope = shown => {
+  const full = resolve(cwd, shown);
+  if (!full) return null;
+  const parts = [], floor = WINDOWS && full.startsWith('\\\\') ? 4 : 1;
+  for (const part of norm(full).split(PATHS.sep)) {
+   if (part === '..') { if (parts.length > floor) parts.pop(); }
+   else if (part !== '.') parts.push(part);
+  }
+  return parts.join(PATHS.sep);
+ };
+ const folder = pathScope(cwd);
+ const exact = value => {
+  const scope = JSON.stringify([folder, value]);
+  return scope.length <= 12000 ? rule(scope, 'exact') : null;
+ };
+ const web = value => {
+  const text = String(value || '').trim();
+  if (!text || /^(?:back|forward|reload)$/i.test(text)) return false;
+  if (/^https?:\/\//i.test(text)) { try { return !!new URL(text).hostname; } catch { return false; } }
+  return !/^(?:[a-z][\w+.-]*:|[\\/])/i.test(text);
+ };
+ if (ALWAYS_READ.has(name)) return rule();
+ if (name === SHELL.tool) return typeof args.command === 'string' && args.command.trim() ? exact(args.command) : null;
+ if (name === 'git') return Array.isArray(args.args) || typeof args.args === 'string' ? exact(args.args) : null;
+ if (name === 'write_file' || name === 'edit_file' || (name === 'browser_screenshot' && args.save_to !== undefined)) {
+  const full = pathScope(name === 'browser_screenshot' ? args.save_to : args.path), project = full !== null && (full === folder || full.startsWith(`${folder}${PATHS.sep}`));
+  return full !== null ? rule(JSON.stringify([folder, project ? 'project' : full]), project ? 'files' : 'file') : null;
+ }
+ if (name === 'video_frames') {
+  if (!args.save_to) return rule();
+  const full = pathScope(args.save_to);
+  return full !== null ? rule(full, 'frames') : null;
+ }
+ if (name === 'browser_navigate') return web(args.url) ? rule('web') : null;
+ if (name === 'browser_tabs') return args.action === 'new' && web(args.url) ? rule('new-web') : null;
+ if (name === 'browser_click') {
+  const target = refsOf(apart, panel)[args.ref] || '';
+  return /^(link|button|clickable|menuitem|option)\b/.test(target) && !RISKY_CLICK.test(target) ? rule('ordinary', 'browser') : null;
+ }
+ if (name === 'browser_type') return args.submit ? null : rule('without-submit', 'browser');
+ if (name === 'browser_press') return /^(escape|esc|tab|arrow(up|down|left|right)|page(up|down)|home|end)$/i.test(String(args.key || '')) ? rule(String(args.key).toLowerCase(), 'browser') : null;
+ if (name === 'browser_select') return RISKY_CLICK.test(`${refsOf(apart, panel)[args.ref] || ''} ${args.option || ''}`) ? null : rule('', 'browser');
+ return null;
+}
+
 function relative(cwd, path) {
  const raw = String(path ?? '.').trim() || '.';
  if (!PATHS.absolute(raw)) return raw.replace(PATHS.here, '');
@@ -818,8 +885,8 @@ function relative(cwd, path) {
 // What the card asking for approval shows: a headline in plain words (the agent's own sentence for commands and
 // file changes), what the step does (`effect`, worked out by the app), the places it touches, and the technical
 // details for whoever wants them.
-function describe(name, args, cwd, apart = null) {
- const refs = refsOf(apart);
+function describe(name, args, cwd, apart = null, panel = null) {
+ const refs = refsOf(apart, panel);
  const purpose = typeof args.description === 'string' ? args.description.trim() : '';
  const file = { kind: 'file', label: String(args.path || '').split(/[\\/]/).filter(Boolean).pop() || String(args.path || ''), title: relative(cwd, args.path || '.') };
  const site = url => ({ kind: 'site', label: host(url), title: url });
@@ -848,6 +915,13 @@ function describe(name, args, cwd, apart = null) {
    const places = items.map(item => item.url ? site(String(item.url)) : item.path ? { kind: 'file', label: String(item.path).split(/[\\/]/).filter(Boolean).pop() || String(item.path), title: relative(cwd, item.path) } : null).filter(Boolean);
    return { kind: online ? 'web' : 'file', title: I18n.t('approve.showPictures'), effect: online ? 'online' : 'read', places, quote: items.map(item => `“${String(item.caption || '')}”`).join(', ') };
   }
+  case 'browser_upload': {
+   const page = browserPages.get(keyOf(apart, panel))?.page || '';
+   const places = (Array.isArray(args.paths) ? args.paths : []).map(given => ({ kind: 'file', label: String(given).split(/[\\/]/).pop(), title: relative(cwd, given) }));
+   if (page) places.push(site(page));
+   return { kind: 'web', title: purpose || I18n.t('approve.upload'), effect: 'online', places, quote: refs[args.ref] || '' };
+  }
+  case 'browser_screenshot': return { kind: 'file', title: purpose || I18n.t('approve.write'), effect: args.save_to !== undefined ? 'change' : 'read', places: args.save_to !== undefined ? [{ kind: 'file', label: String(args.save_to || '').split(/[\\/]/).filter(Boolean).pop() || String(args.save_to || ''), title: relative(cwd, args.save_to || '.') }] : [] };
   case 'browser_navigate': return { kind: 'web', title: I18n.t('approve.browse'), effect: 'online', places: [site(String(args.url || ''))] };
   case 'browser_tabs': return { kind: 'web', title: I18n.t('approve.tab'), effect: 'online', places: [site(String(args.url || ''))] };
   case 'browser_click': return { kind: 'web', title: I18n.t('approve.click'), effect: 'online', places: [], quote: refs[args.ref] || (args.ref ? `[${args.ref}]` : `x ${Math.round(args.x)}, y ${Math.round(args.y)}`) };
@@ -1139,15 +1213,19 @@ function frames(result) {
  return { text: lines.join('\n'), images: result.frames.map(frame => ({ label: `Frame at ${seconds(frame.time)}`, url: frame.url })) };
 }
 
-async function browser(name, args, id, cwd, apart) {
- const panel = window.browserPanel;
- if (!panel) return 'Error: the built-in browser is only available in the desktop app';
- const result = await panel.run(name, args, { id, cwd, apart });
+async function browser(name, args, id, cwd, apart, panel = null) {
+ const targetPanel = panel || window.browserPanel;
+ if (!targetPanel) return 'Error: the built-in browser is only available in the desktop app';
+ const key = keyOf(apart, targetPanel);
+ const context = browserPages.get(key);
+ // These fields come from the app's snapshot, never from model- or page-supplied upload arguments.
+ const request = name === 'browser_upload' ? { ...args, _page: context?.page || '', _document: context?.document || '' } : args;
+ const result = await targetPanel.run(name, request, { id, cwd, apart });
  if (!result || result.error) return `Error: ${result?.error || 'the browser did not answer'}`;
- if (result.refs) seen.set(apart || MAIN, result.refs);
+ if (result.refs) { seen.set(key, result.refs); browserPages.set(key, { page: result.page || '', document: result.document || '' }); }
  if (result.image) return { text: result.text, images: [{ label: 'Screenshot of the built-in browser', url: result.image }] };
  if (result.html !== undefined) return page({ url: result.url, status: 200, type: 'text/html', text: result.html }, args.start);
- const tabs = name === 'browser_tabs' ? '' : panel.tabsLine(apart);
+ const tabs = name === 'browser_tabs' ? '' : targetPanel.tabsLine(apart);
  return tabs ? `${tabs}\n${result.text}` : result.text;
 }
 
@@ -1169,6 +1247,7 @@ let env = null;
  modes: MODES,
  needsApproval,
  needsTicket: name => AUTOMATION_INPUT.has(name),
+ approvalRule,
  describe,
  inside,
  environment() {
@@ -1195,10 +1274,10 @@ let env = null;
  ports: () => bridge?.ports ? bridge.ports().catch(() => []) : Promise.resolve([]),
  // `apart`: the agent works in a browser tab of its own (a mini chat's). `ticket`: the one-use permission the main
  // process issued after the user allowed an input action on its card.
- async run(name, args, { id, cwd, apart = null, ticket = '' }) {
+ async run(name, args, { id, cwd, apart = null, ticket = '', panel = null }) {
   if (!bridge) return 'Error: tools are only available in the desktop app';
   if (AUTOMATION.has(name) && !automationOn()) return 'Error: Desktop automation is turned off in Settings → General.';
-  if (name.startsWith('browser_')) return browser(name, args, id, cwd, apart);
+  if (name.startsWith('browser_')) return browser(name, args, id, cwd, apart, panel);
   if (name === 'web_search') return search(args.query, id, cwd);
   if (name === 'find_media') return media(args, id, cwd);
   const result = await bridge.run(id, name, args, cwd, AUTOMATION_INPUT.has(name) ? ticket : undefined);
@@ -1212,7 +1291,8 @@ let env = null;
  cancel(id) {
   bridge?.cancel(id);
   // A browser step still waiting for its turn at the keyboard does not start.
-  window.browserPanel?.cancel(id);
+  if (window.BrowserPanel?.cancel) window.BrowserPanel.cancel(id);
+  else window.browserPanel?.cancel(id);
  },
  // One way to write a file's place, so that two agents naming the same file are seen to.
  place(cwd, path) {

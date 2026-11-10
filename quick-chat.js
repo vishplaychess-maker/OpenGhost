@@ -15,9 +15,9 @@ if (!quick) return;
 if (!bridge.quick) {
  // The main window's part.
  const open = chat.open.bind(chat);
- chat.open = async id => {
+ chat.open = async (id, options) => {
   if (library.chat(id)?.quick && await quick.claim(id).catch(() => false)) return;
-  return open(id);
+  return open(id, options);
  };
  // A chat sent on from the quick window: the list is read anew, and the chat as the disk has it.
  quick.onOpen(async id => {
@@ -158,7 +158,8 @@ class QuickViewer {
   return QuickViewer.current = new QuickViewer(options);
  }
 
- constructor({ items, index = 0, slider = null }) {
+ constructor({ items, index = 0, slider = null, opener = null }) {
+  this.opener = opener;
   this.slider = slider;
   this.closing = false;
   const veil = this.veil = popover('quick-photo-veil', 'viewer.label');
@@ -190,10 +191,11 @@ class QuickViewer {
  }
 
  closed(index) {
+  this.closing = true;
   document.removeEventListener('keydown', this.onKey, true);
   if (QuickViewer.current === this) QuickViewer.current = null;
   if (Number.isInteger(index)) this.slider?.go(index);
-  const veil = this.veil, done = () => { veil.hidePopover(); veil.remove(); };
+  const veil = this.veil, done = () => { veil.hidePopover(); veil.remove(); this.opener?.focus?.({ preventScroll: true }); };
   veil.animate({ opacity: [1, 0] }, VEIL_FADE).finished.then(done, done);
  }
 }
@@ -266,17 +268,18 @@ class QuickChat {
   if (AgentTools.available) {
    const mode = $('.composer-mode');
    mode.hidden = false;
-   this.mode = new ModePicker({ button: mode, host: dialog, anchor: '--mini-mode', settings, onChange: () => this.chat.onModeChange() });
+   this.mode = new ModePicker({ button: mode, host: dialog, anchor: '--mini-mode', settings, chat: this.chat });
   }
   // The model and the effort are this chat's own. Their stages open in this window, which is the card's size, and so
   // keep to the card.
   this.models = new ModelStage({ button: $('.composer-model'), root: popover('model-stage is-quick', 'model'), chat: this.chat, settings, input: this.input });
   this.models.room = () => dialog.getBoundingClientRect();
-  this.effort = new EffortSlider({ button: $('.composer-effort'), panel: popover('effort-panel is-quick', 'effort', EFFORT), settings });
+  this.effort = new EffortSlider({ button: $('.composer-effort'), panel: popover('effort-panel is-quick', 'effort', EFFORT), settings, chat: this.chat });
 
   this.input.addEventListener('input', () => this.sync());
   this.input.addEventListener('keydown', event => this.onKey(event));
   this.send.addEventListener('composer-send', () => this.submit());
+  this.send.addEventListener('composer-stop', () => { this.chat.stop(); this.sync(); });
   this.composer.addEventListener('mousedown', event => {
    if (event.target === this.composer || event.target.classList.contains('composer-toolbar')) {
     event.preventDefault();
@@ -498,7 +501,7 @@ class QuickChat {
  sync() {
   const chat = this.chat, busy = chat.busy, has = this.has, ended = this.was && !busy;
   this.was = busy;
-  this.send.toggleAttribute('disabled', !this.text.text().trim() && !this.attachments?.count);
+  this.send.configure({ busy, empty: !this.text.text().trim() && !this.attachments?.count, stopping: !!chat.active?.turn?.controller.signal.aborted });
   this.field.classList.toggle('has-value', this.input.value !== '');
   for (const button of [this.newButton, this.expandButton, this.clearButton]) button.classList.toggle('is-shown', has);
   // The chat goes on into the app whole: with a reply still being written it waits for it.
@@ -506,6 +509,8 @@ class QuickChat {
   this.expandButton.title = busy ? I18n.t('quick.expand.wait') : '';
   if (!has) this.disarm();
   settings.show(chat.model);
+  this.mode?.sync();
+  this.effort.follow();
   this.models.sync();
   this.effort.lock(busy);
   // A reply that came while the window was out of sight is marked in the list, like one that came to a chat off

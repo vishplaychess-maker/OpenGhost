@@ -113,18 +113,21 @@ function spring(s, goal, [k, c], dt) {
  return true;
 }
 
+// The nodes that are no longer wanted go before anything moves. A row moved in front of a row that is removed in the
+// same pass (a new chat's stand-in, say) came out with its buttons' hover style stale: they stayed dimmed under the
+// pointer until the list drew that row again.
 function place(parent, children) {
+ for (const node of [...parent.children]) if (!children.includes(node)) node.remove();
  children.forEach((child, k) => {
   const at = parent.children[k] || null;
   if (at === child) return;
-  if (child.isConnected && parent.moveBefore) parent.moveBefore(child, at);
+  if (child.isConnected && parent.isConnected && parent.moveBefore) parent.moveBefore(child, at);
   else parent.insertBefore(child, at);
  });
- while (parent.children.length > children.length) parent.lastElementChild.remove();
 }
 
 class ChatList {
- constructor({ root, library, chat, onNewFolder, onNewChat, onLock, onNewRoutine = null, onSkills = null, onFork = null }) {
+ constructor({ root, library, chat, onNewFolder, onNewChat, onLock, onNewRoutine = null, onSkills = null, onFork = null, onSplit = null }) {
   this.root = root;
   this.list = root.querySelector('.chats-list');
   this.library = library;
@@ -139,6 +142,7 @@ class ChatList {
   this.onSkills = onSkills;
   // Fork a whole chat (chat.js), from the dots' menu; how far in each chat's row stands, as `tree` put it.
   this.onFork = onFork;
+  this.onSplit = onSplit;
   this.depths = new Map();
   // The groups whose chats all show (see `trim`), and the one whose rest is coming out now.
   this.opened = new Set();
@@ -146,20 +150,13 @@ class ChatList {
   // The dots' menu of a row: what the row's own hidden buttons say and allow, as lines.
   this.menu = new RowMenu({
    scroller: root.querySelector('.chats-scroll') || root,
-   items: id => {
-    const item = this.rows.get(id);
-    return item && [
-     { name: 'rename', label: I18n.t('chat.rename'), icon: Glyphs.pencil, disabled: item.rename.disabled },
-     // A locked chat can't be read, so it can't be forked until it is open.
-     ...(this.onFork ? [{ name: 'fork', label: I18n.t('chat.fork'), icon: Glyphs.fork, disabled: this.library.isLocked(id) }] : []),
-     { name: 'lock', label: item.lock.getAttribute('aria-label') || I18n.t('chat.lock'), icon: Glyphs.padlock, disabled: item.lock.disabled },
-     { name: 'delete', label: I18n.t('chat.delete'), icon: Glyphs.trash },
-    ];
-   },
-   act: (name, id, row) => {
+   items: id => this.menuItems(id),
+   act: (name, id, row, from) => {
     if (name === 'rename') this.rename(id);
+    else if (name === 'split') this.onSplit?.(id);
     else if (name === 'fork') this.onFork?.(id);
-    else if (name === 'lock') this.onLock?.(id, row);
+    else if (name === 'lock') this.onLock?.(id, row, from);
+    else if (name === 'permissions') return this.library.resetPermissions(id);
     else if (name === 'delete') this.remove(id);
    },
   });
@@ -185,8 +182,30 @@ class ChatList {
   this.list.addEventListener('keydown', event => this.onKey(event));
   this.list.addEventListener('pointerover', event => this.hover(event.target.closest('.chat-row, .chats-folder-head, .chats-more')));
   this.list.addEventListener('pointerleave', () => this.hover(null));
+  this.list.addEventListener('dragstart', event => this.onDragStart(event));
+  this.list.addEventListener('dragend', () => this.onDragEnd());
   setInterval(() => this.clock(), CLOCK);
   this.render();
+ }
+
+ async menuItems(id) {
+  const item = this.rows.get(id);
+  if (!item) return null;
+  let reset = false;
+  if ((this.chat.modeOf?.({ record: this.library.chat(id) }) || this.chat.settings?.mode) === 'ask' && this.library.resetPermissions && this.library.permissions && !this.library.isLocked(id)) {
+   try { reset = (await this.library.permissions(id)).length > 0; } catch {}
+  }
+  // The mode, lock or row can change while the permission file is read.
+  if (this.rows.get(id) !== item) return null;
+  reset = reset && (this.chat.modeOf?.({ record: this.library.chat(id) }) || this.chat.settings?.mode) === 'ask' && !this.library.isLocked(id);
+  return [
+   { name: 'rename', label: I18n.t('chat.rename'), icon: Glyphs.pencil, disabled: item.rename.disabled },
+   ...(this.onSplit && this.chat.activeId !== id && !this.chat.workspace?.viewOfId(id) ? [{ name: 'split', label: I18n.t('split.open'), icon: Glyphs.split, disabled: this.chat.workspace && !this.chat.workspace.canFit() }] : []),
+   ...(this.onFork ? [{ name: 'fork', label: I18n.t('chat.fork'), icon: Glyphs.fork, disabled: this.library.isLocked(id) }] : []),
+   { name: 'lock', label: item.lock.getAttribute('aria-label') || I18n.t('chat.lock'), icon: Glyphs.padlock, disabled: item.lock.disabled },
+   ...(reset ? [{ name: 'permissions', label: I18n.t('approve.reset'), icon: Glyphs.shield }] : []),
+   { name: 'delete', label: I18n.t('chat.delete'), icon: Glyphs.trash },
+  ];
  }
 
  setQuery(query) {
@@ -261,24 +280,33 @@ class ChatList {
   const time = element('span', 'chat-time');
   const actions = element('span', 'chat-actions');
   const rename = action('chat-action is-rename', 'rename', Glyphs.pencil);
+  const split = action('chat-action is-split-action', 'split', Glyphs.split);
   const lock = action('chat-action is-lock', 'lock', Glyphs.padlock), pin = action('chat-action', 'pin', Glyphs.pin), remove = action('chat-action is-delete', 'delete', Glyphs.trash);
-  // The row shows the pin and the dots. Renaming, the password and deleting are lines of the dots' menu; their buttons
+  // The row shows the split button, the pin and the dots. Renaming, the password and deleting are lines of the dots' menu; their buttons
   // are kept off the page and only hold what the menu says of them (the padlock's words, what is not to be had now).
   const more = action('chat-action is-more', 'more', DOTS);
   label(rename, I18n.t('chat.rename'));
+  label(split, I18n.t('split.open'));
   label(remove, I18n.t('chat.delete'));
   label(more, I18n.t('chat.more'));
   more.setAttribute('aria-haspopup', 'menu');
-  actions.append(pin, more);
+  split.hidden = true;
+  actions.append(split, pin, more);
   line.append(time, said);
   body.append(title, line);
   meta.append(photo, actions);
   row.append(mark, body, meta);
-  return { row, mark, title, time, said, photo, shown: null, rename, lock, pin, remove, ghost: null, pinned: null, guarded: null, locked: null, veil: 0, confirm: false, timer: 0, editing: null };
+  return { row, mark, title, time, said, photo, shown: null, rename, split, lock, pin, remove, ghost: null, pinned: null, guarded: null, locked: null, veil: 0, confirm: false, timer: 0, editing: null };
  }
 
  paint(item, chat) {
   const active = chat.id === this.chat.activeId, routine = routineState(chat);
+  const splitShown = !!this.chat.workspace?.viewOfId(chat.id);
+  const canSplit = !!this.onSplit && !active && !splitShown;
+  item.split.hidden = !canSplit;
+  item.split.disabled = !!(this.chat.workspace && !this.chat.workspace.canFit());
+  item.row.draggable = !!chat.id && canSplit && !item.split.disabled;
+  item.row.classList.toggle('is-split-active', splitShown && !active);
   this.guard(item, chat);
   item.time.textContent = this.timeOf(chat);
   this.preview(item, chat);
@@ -403,7 +431,74 @@ class ChatList {
   }
  }
 
+ // A pair is one entry for ordering and trimming, with each parent's existing fork tree kept under it.
+ // This is only workspace presentation: fork creation, saved parent links and folders stay unchanged.
+ pairChats(pairs, match) {
+  this.pairItems = new Map();
+  const members = new Set(), valid = pairs.map(pair => ({ pair, chats: [this.library.chat(pair.left), this.library.chat(pair.right)] })).filter(entry => entry.chats.every(Boolean));
+  const roots = new Set(valid.flatMap(entry => entry.chats.map(chat => chat.id))), children = new Map();
+  for (const chat of this.library.chats) {
+   if (chat.fork && chat.fork !== chat.id && !roots.has(chat.id)) children.set(chat.fork, [...(children.get(chat.fork) || []), chat]);
+  }
+  const branch = root => {
+   const rows = [], visited = new Set(), pending = [root];
+   while (pending.length) {
+    const chat = pending.pop();
+    if (visited.has(chat.id)) continue;
+    visited.add(chat.id); rows.push(chat);
+    pending.push(...(children.get(chat.id) || []));
+   }
+   return this.tree(rows);
+  };
+  for (const { pair, chats } of valid) {
+   // A chat in another pair starts its own group, never a duplicate nested inside this one.
+   const rows = chats.flatMap(branch), anchor = chats.find(chat => chat.pinned) || chats[0];
+   this.pairItems.set(anchor.id, { pair, chats, rows });
+   for (const chat of rows) members.add(chat.id);
+  }
+  return this.library.chats.flatMap(chat => {
+   const entry = this.pairItems.get(chat.id);
+   if (entry) return entry.rows.some(match) ? [{ ...chat, pinned: entry.rows.some(one => one.pinned), updated: Math.max(...entry.rows.map(one => Number(one.updated) || 0)) }] : [];
+   return !members.has(chat.id) && match(chat) ? [chat] : [];
+  });
+ }
+
+ pairItem({ pair, chats, rows = chats }, anchor, seen) {
+  this.pairGroups ||= new Map();
+  let group = this.pairGroups.get(pair.left);
+  if (!group) {
+   group = element('section', 'chat-pair');
+   group.setAttribute('role', 'group');
+   const head = element('div', 'chat-pair-head');
+   const name = element('span', 'chat-pair-label');
+   name.innerHTML = `${Glyphs.split}<span></span>`;
+   const close = document.createElement('close-button');
+   close.className = 'chat-pair-close';
+   close.addEventListener('dismiss', () => this.chat.workspace?.unpair(pair.left));
+   head.append(name, close); group.append(head);
+   this.pairGroups.set(pair.left, group);
+  }
+  group.dataset.id = anchor.id;
+  group.setAttribute('aria-label', I18n.t('split.label'));
+  group.querySelector('.chat-pair-label span').textContent = I18n.t('split.label');
+  group.querySelector('.chat-pair-close').setAttribute('label', I18n.t('split.close'));
+  group.classList.toggle('is-active', this.chat.workspace?.opened && this.chat.workspace.chat.activeId === pair.left && this.chat.workspace.pane?.chat.activeId === pair.right);
+  if (!group.isConnected) this.list.append(group);
+  place(group, [group.firstElementChild, ...rows.map(chat => this.rowItem(chat, seen))]);
+  return group;
+ }
+
+ isShown(chat) {
+  const pair = this.pairItems?.get(chat.id), chats = pair?.rows || pair?.chats || [chat];
+  return chats.some(one => one.id === this.chat.activeId || this.chat.workspace?.viewOfId?.(one.id));
+ }
+
  item(chat, seen) {
+  const pair = this.pairItems?.get(chat.id);
+  return pair ? this.pairItem(pair, chat, seen) : this.rowItem(chat, seen);
+ }
+
+ rowItem(chat, seen) {
   let item = this.rows.get(chat.id);
   if (!item) {
    item = this.row(chat);
@@ -421,7 +516,8 @@ class ChatList {
   // A locked chat's title is sealed, so a search never finds it.
   const match = chat => !query || (this.library.titleOf(chat) || '').toLowerCase().includes(query);
   const recent = (a, b) => b.updated - a.updated;
-  const live = lib.chats.filter(match);
+  const pairs = this.chat.workspace?.loaded ? this.chat.workspace.pairs.prune(id => lib.chat(id)) : [];
+  const live = this.pairChats(pairs, match);
   const pinned = this.tree(live.filter(chat => chat.pinned));
   // A routine's own chats stand in the routines' group, the one that runs soonest first.
   const soon = chat => Math.min(...(window.Routines?.of(chat.id) || []).filter(item => Routines.live(item)).map(item => item.next), Infinity);
@@ -435,9 +531,11 @@ class ChatList {
   // The stand-in row of a new chat stands where its first message will put it: in its folder, or among the chats.
   const draft = !query && this.chat.isDraft ? this.chat.folder || HOME : null;
   const order = [this.glide];
-  if (pinned.length) order.push(this.pinnedHead, ...pinned.map(chat => this.item(chat, seen)));
+  this.pairGroups ||= new Map();
+  for (const id of this.pairGroups.keys()) if (!pairs.some(pair => pair.left === id)) this.pairGroups.delete(id);
   if (this.onSkills && !query) order.push(this.skillsRow());
   if (this.onNewRoutine && (!query || routines.length)) order.push(this.routinesGroup(routines, !!query, seen));
+  if (pinned.length) order.push(this.pinnedHead, ...pinned.map(chat => this.item(chat, seen)));
   if (!query || loose.length || I18n.t('chats.home').toLowerCase().includes(query)) order.push(this.home(loose, !!query, seen, draft === HOME));
   order.push(this.foldersHead);
   for (const { folder, chats } of folders) order.push(this.folder(folder, chats, !!query, seen, !!draft?.path && key(draft.path) === key(folder.path)));
@@ -582,7 +680,7 @@ class ChatList {
   let shown = chats;
   if (!open) {
    shown = this.heads(chats, SHOWN);
-   const active = chats.find(chat => chat.id === this.chat.activeId);
+   const active = chats.find(chat => this.isShown(chat));
    if (active && !shown.includes(active)) shown.push(...this.family(chats, active).filter(chat => !shown.includes(chat)));
   }
   const row = group.moreRow ||= this.moreRow(group);
@@ -616,9 +714,9 @@ class ChatList {
    return;
   }
   this.opened.delete(group);
-  const rows = [...group.inner.querySelectorAll('.chat-row:not(.is-draft)')], depth = row => this.depths.get(row.dataset.id) || 0;
+  const rows = [...group.inner.children].filter(row => row.matches('.chat-row:not(.is-draft), .chat-pair')), depth = row => this.depths.get(row.dataset.id) || 0;
   const keep = new Set(this.heads(rows, SHOWN, depth));
-  const active = rows.find(row => row.dataset.id === this.chat.activeId);
+  const active = rows.find(row => this.isShown({ id: row.dataset.id }));
   if (active) for (const row of this.family(rows, active, depth)) keep.add(row);
   const going = rows.filter(row => !keep.has(row));
   if (reducedMotion() || !going.length) { this.render(); return; }
@@ -695,6 +793,7 @@ class ChatList {
    else if (button.dataset.action === 'new-chat') this.newChat(group);
    else if (button.dataset.action === 'delete-folder') this.askDeleteFolder(group);
    else if (button.dataset.action === 'rename') this.rename(id);
+   else if (button.dataset.action === 'split') this.onSplit?.(id);
    else if (button.dataset.action === 'pin') this.togglePin(id);
    else if (button.dataset.action === 'delete') this.askDelete(id);
    else if (button.dataset.action === 'lock') this.onLock?.(id, button.closest('.chat-row'));
@@ -713,6 +812,24 @@ class ChatList {
   }
   const row = event.target.closest('.chat-row');
   if (row) this.chat.open(row.dataset.id);
+ }
+
+ onDragStart(event) {
+  const row = event.target.closest('.chat-row');
+  const id = row?.dataset.id;
+  if (!id || !this.onSplit || this.chat.activeId === id || this.chat.workspace?.viewOfId(id) || (this.chat.workspace && !this.chat.workspace.canFit())) {
+   event.preventDefault();
+   return;
+  }
+  event.dataTransfer?.setData('text/plain', id);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+  row.classList.add('is-dragging');
+  this.chat.workspace?.beginDrag?.(id);
+ }
+
+ onDragEnd() {
+  for (const item of this.rows.values()) item.row.classList.remove('is-dragging');
+  this.chat.workspace?.endDrag?.();
  }
 
  onKey(event) {
@@ -870,6 +987,12 @@ class ChatList {
    moving = spring(g.o, target ? 1 : 0, FADE_SPRING, dt) || moving;
   }
   const style = this.glide.style;
+  if (target) {
+   const rect = target.getBoundingClientRect(), frame = this.list.getBoundingClientRect();
+   style.left = `${(rect.left - frame.left).toFixed(2)}px`;
+   style.right = 'auto';
+   style.width = `${rect.width.toFixed(2)}px`;
+  }
   style.transform = `translateY(${g.y[0].toFixed(2)}px)`;
   style.height = `${Math.max(0, g.h[0]).toFixed(2)}px`;
   style.opacity = Math.min(1, Math.max(0, g.o[0])).toFixed(3);

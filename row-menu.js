@@ -29,10 +29,12 @@ function spring(s, goal, [k, c], dt) {
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 class RowMenu {
- // items(id): the lines to show, each { name, label, icon, disabled }; act(name, id, row): one was chosen.
+ // items(id): the lines to show; act(name, id, row, from): one was chosen. The password card can grow from this menu.
  constructor({ items, act, scroller }) {
   Object.assign(this, { items, act });
   this.id = '';
+  this.pending = '';
+  this.opening = 0;
   this.row = null;
   this.button = null;
   this.armed = null;
@@ -58,21 +60,34 @@ class RowMenu {
   root.addEventListener('focusin', event => this.point(event.target.closest?.('.row-menu-line') || null));
   // A press anywhere else puts the menu away; the dots themselves toggle it.
   document.addEventListener('pointerdown', event => {
-   if (this.id && !root.contains(event.target) && !event.target.closest?.('[data-action="more"]')) this.close();
+   if ((this.id || this.pending) && !root.contains(event.target) && !event.target.closest?.('[data-action="more"]')) this.close();
   }, true);
+  document.addEventListener('keydown', event => {
+   if (this.pending && event.key === 'Escape' && !event.isComposing) { event.preventDefault(); this.close(true); }
+  });
   window.addEventListener('resize', () => this.close(true));
   scroller?.addEventListener('scroll', () => this.close(), { passive: true });
  }
 
  toggle(id, row, button) {
-  if (this.id === id) { this.close(); return; }
+  if (this.id === id || this.pending === id) { this.close(); return; }
   this.open(id, row, button);
  }
 
- open(id, row, button) {
-  if (this.id) this.finish();
-  const lines = this.items(id);
-  if (!lines?.length) return;
+ async open(id, row, button) {
+  this.finish();
+  const request = ++this.opening;
+  this.pending = id;
+  let lines;
+  try { lines = await this.items(id); } catch { if (request === this.opening) this.pending = ''; return false; }
+  if (request !== this.opening) return false;
+  this.pending = '';
+  if (!lines?.length || row?.isConnected === false || button?.isConnected === false) return false;
+  this.show(id, row, button, lines);
+  return true;
+ }
+
+ show(id, row, button, lines) {
   Object.assign(this, { id, row, button });
   this.glide = Object.assign(document.createElement('span'), { className: 'row-menu-glide' });
   this.glide.setAttribute('aria-hidden', 'true');
@@ -134,6 +149,24 @@ class RowMenu {
 
  choose(line) {
   const name = line.dataset.name;
+  // A reset is complete only when it is on disk. Keep the menu open on failure so it can be retried.
+  if (name === 'permissions') {
+   const { id, row } = this;
+   if (line.disabled) return;
+   line.disabled = true;
+   line.querySelector('.row-menu-word').textContent = I18n.t('approve.resetting');
+   Promise.resolve().then(() => this.act(name, id, row)).then(() => {
+    if (this.id !== id || !this.root.contains(line)) return;
+    this.close(true);
+    row?.focus({ preventScroll: true });
+   }, () => {
+    if (this.id !== id || !this.root.contains(line)) return;
+    line.disabled = false;
+    line.querySelector('.row-menu-word').textContent = I18n.t('approve.resetFailed');
+    line.focus({ preventScroll: true });
+   });
+   return;
+  }
   // Deleting asks twice.
   if (name === 'delete' && this.armed !== line) {
    this.armed = line;
@@ -149,8 +182,15 @@ class RowMenu {
    return;
   }
   const { id, row } = this;
+  let from = null;
+  if (name === 'lock') {
+   const style = getComputedStyle(this.root), content = document.createElement('div');
+   content.className = 'lock-menu-content';
+   content.append(...[...this.root.children].map(node => node.cloneNode(true)));
+   from = { rect: this.root.getBoundingClientRect(), radius: style.borderRadius, padding: style.padding, content };
+  }
   this.close(true);
-  this.act(name, id, row);
+  this.act(name, id, row, from);
  }
 
  onKey(event) {
@@ -169,6 +209,8 @@ class RowMenu {
  }
 
  close(instant = false) {
+  this.opening++;
+  this.pending = '';
   if (!this.id) return;
   this.release();
   if (instant || !this.root.matches(':popover-open')) { this.finish(); return; }
@@ -187,6 +229,8 @@ class RowMenu {
  }
 
  finish() {
+  this.opening++;
+  this.pending = '';
   if (this.id) this.release();
   this.leaving = null;
   for (const animation of this.root.getAnimations()) animation.cancel();

@@ -1728,10 +1728,11 @@ textarea,
 }
 
 .thread-list {
+  --thread-side-gap: max(var(--composer-side-gap), calc(var(--scrollbar-hit-width) + 6px));
   display: flex;
   flex-direction: column;
   gap: 28px;
-  width: min(var(--composer-max-width), 100% - 2 * var(--composer-side-gap));
+  width: min(var(--composer-max-width), 100% - 2 * var(--thread-side-gap));
   margin: 0 auto;
   padding: 56px 0 0;
 }
@@ -1782,8 +1783,9 @@ textarea,
   pointer-events: none;
 }
 
+/* Both edge veils must paint above the indicator, not only the later ::after veil. */
 .thread-scrollbar {
-  z-index: 2;
+  z-index: 1;
   top: 12px;
   right: 2px;
   bottom: calc(var(--composer-space, 140px) + 4px);
@@ -2371,9 +2373,67 @@ ghost-thinking {
 
 .message-tools {
   display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  margin: 8px 0 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.message-tools:empty { display: none; }
+
+.message-time {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  height: 28px;
+  overflow: hidden;
+  color: var(--fg-secondary);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+
+.message-tool-actions {
+  display: flex;
+  flex: none;
   gap: 2px;
-  margin: 10px 0 0 -6px;
-  animation: message-tools-in 0.45s var(--motion-easing) both;
+}
+
+.message:hover > .message-tools,
+.message:has(:focus-visible) > .message-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .message-tools { opacity: 1; pointer-events: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-tools { transition: none; }
+}
+
+.thread-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 2px 12px;
+  color: var(--fg-secondary);
+  font-size: var(--small-font-size);
+  font-weight: 500;
+  line-height: 1.5;
+  user-select: none;
+  pointer-events: none;
 }
 
 .message-note + .message-tools {
@@ -2384,20 +2444,12 @@ ghost-thinking {
   margin-top: 6px;
 }
 
-.message.is-user .message-tools {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin: 0;
-  padding-top: 2px;
-  opacity: 0;
-  animation: none;
-  transition: opacity 0.2s ease;
-}
+.message.is-assistant .message-tools { margin-left: -6px; }
+.message.is-assistant .message-time { order: 1; }
 
-.message.is-user:hover .message-tools,
-.message.is-user .message-tools:has(:focus-visible, .is-copied) {
-  opacity: 1;
+.message.is-user .message-tools {
+  align-self: flex-end;
+  margin: 0;
 }
 
 /* A message still waiting for its turn is not in the chat yet: nothing can be forked from it. */
@@ -2700,13 +2752,24 @@ ghost-thinking {
 
 .approval-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 14px;
 }
 
-.approval-foot > * {
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+.approval-foot > :not(.approval-actions),
+.approval-actions > * {
   animation: approval-rise 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) calc(240ms + var(--i) * 50ms) backwards;
 }
 
@@ -2766,11 +2829,31 @@ ghost-thinking {
   transition: background-color 0.15s ease, transform 0.2s var(--motion-easing), opacity 0.2s ease;
 }
 
+.approval-hint,
+.approval-error {
+  margin: 8px 0 0;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.approval-error {
+  color: rgb(var(--danger-rgb));
+}
+
+.approval-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.approval-button.is-always,
 .approval-button.is-deny {
   background: rgba(var(--fg-rgb), 0.07);
   color: var(--fg-primary);
 }
 
+.approval-button.is-always:hover:not(:disabled),
 .approval-button.is-deny:hover {
   background: rgba(var(--fg-rgb), 0.11);
 }
@@ -9772,6 +9855,18 @@ h6.md-h {
   pointer-events: auto;
 }
 
+/* Keep overflow geometry and edge fades even while the opted-in indicator is idle. */
+.scrollbar.is-auto-hide.is-scrollable:not(.is-scroll-active):not(.is-dragging) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrollbar.is-auto-hide {
+    transition: none;
+  }
+}
+
 .scrollbar-thumb {
   position: absolute;
   top: 0;
@@ -9838,6 +9933,8 @@ h6.md-h {
    hangs below the line, they stood a pixel lower than the shield and the plus. */
 .composer-mode-label {
   text-box: trim-both cap alphabetic;
+  /* Keep rasterised capitals inside the clipping box while the composer moves. */
+  padding-block: .3em;
 }
 
 .composer-mode:hover {
@@ -10212,12 +10309,14 @@ h6.md-h {
   --icon-rgb: var(--composer-accent-rgb);
 }
 
-/* The send button has grown over them into "Send suggestion": they slip under it and are gone. */
+/* The send button grows over the locked controls into End or "Send suggestion": they slip under it and are gone. */
 .composer-effort,
 .composer-model {
   transition: opacity 0.2s ease, transform 0.32s cubic-bezier(0.3, 0.7, 0.2, 1), filter 0.2s ease, visibility 0s;
 }
 
+.composer-actions:has(> .composer-send[working]) .composer-effort,
+.composer-actions:has(> .composer-send[working]) .composer-model,
 .composer-actions.is-suggesting .composer-effort,
 .composer-actions.is-suggesting .composer-model {
   opacity: 0;
@@ -10230,6 +10329,8 @@ h6.md-h {
 @media (prefers-reduced-motion: reduce) {
   .composer-effort,
   .composer-model,
+  .composer-actions:has(> .composer-send[working]) .composer-effort,
+  .composer-actions:has(> .composer-send[working]) .composer-model,
   .composer-actions.is-suggesting .composer-effort,
   .composer-actions.is-suggesting .composer-model {
     transition: none;
@@ -10625,6 +10726,54 @@ h6.md-h {
   user-select: none;
 }
 
+/* Fast is a separate opt-in in the same control layer; it never becomes an effort stop. */
+.effort-panel.has-fast {
+  width: min(calc(286px - 32px * var(--effort-compact, 0)), calc(100vw - 24px));
+  padding-left: 8px;
+}
+
+.effort-panel.has-fast:popover-open {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.effort-panel.has-fast .effort-slider {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The lens needs its full leading clearance only at the minimum; hit targets remain separate. */
+.effort-panel.has-fast .effort-track { left: calc(18px - 14px * var(--effort-compact, 0)); }
+
+.effort-fast {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: color-mix(in srgb, rgb(var(--composer-accent-rgb)), rgb(var(--composer-on-accent-rgb)) calc(var(--paint, 0) * 100%));
+  opacity: var(--fast-reveal, 0);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.effort-fast[hidden] { display: none; }
+.effort-fast .glyph { width: 18px; height: 18px; }
+.effort-fast[aria-pressed="true"] .glyph { fill: currentColor; }
+.effort-fast:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.effort-fast:disabled { cursor: default; }
+.effort-panel.fast-only { width: 64px; padding-inline: 14px; justify-content: center; }
+.effort-panel.fast-only .effort-slider,
+.effort-panel.fast-only .effort-title { display: none; }
+@media (prefers-reduced-motion: reduce) { .effort-fast { transition: none; } }
+
 /* The effort's stage: the model picker's veil behind the panel, and over the slider the level's name. Each name takes
    its weight, spacing and glow from how high its level stands (--level-heat), strains toward the next level while the lens
    is dragged (--strain), and leans as the lens moves (--lean). */
@@ -10823,10 +10972,13 @@ h6.md-h {
 .composer-send {
   --icon-rgb: var(--composer-on-accent-rgb);
   --send-bg: var(--composer-accent-rgb);
+  --send-end-bg: 255, 77, 87;
+  --send-end-ink: 255, 255, 255;
 }
 
 .settings {
   --settings-nav: 180px;
+  user-select: none;
   position: fixed;
   inset: 0;
   width: min(780px, 100% - 48px);
@@ -13472,6 +13624,22 @@ h6.md-h {
   pointer-events: none;
 }
 
+.attachment-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.attachment-preview:focus-visible {
+  outline: 2px solid rgb(var(--link-rgb));
+  outline-offset: 2px;
+}
+
 .attachment-thumb {
   display: block;
   width: 100%;
@@ -14680,15 +14848,22 @@ button.attachment-text {
   --glass-backdrop: blur(5px) saturate(1.4) brightness(1.02);
 }
 
-.browser-tools:has(> [hidden]) {
+.browser-tools:not(:has(> :not([hidden]))) {
   display: none;
+}
+
+.browser-tools:has(> :not([hidden]) ~ :not([hidden])) {
+  width: 72px;
+  gap: 2px;
+  padding: 2px 7px;
 }
 
 .browser-tools > :not([disabled]):hover {
   --icon-button-bg: rgba(var(--fg-rgb), 0.1);
 }
 
-.browser-toggle[hidden] {
+.browser-toggle[hidden],
+.split-toggle[hidden] {
   display: none;
 }
 
@@ -16897,6 +17072,23 @@ html[data-theme="light"] .select-menu {
   letter-spacing: -0.01em;
 }
 
+.lock-card.is-from-menu {
+  overflow: hidden;
+}
+
+.lock-card.is-from-menu .lock-card-body {
+  width: var(--lock-body-width);
+}
+
+.lock-menu-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--lock-menu-width);
+  pointer-events: none;
+  user-select: none;
+}
+
 .lock-card .lock-shell {
   background: rgba(var(--fg-rgb), 0.09);
   box-shadow: none;
@@ -17965,8 +18157,12 @@ html[data-theme="light"] .settings {
 }
 
 /* Where there is no browser's button (the quick chat), the routines' one takes its corner. */
-.main:has(> .browser-tools > [hidden]) .routines-pill {
+.main:not(:has(> .browser-tools > :not([hidden]))) .routines-pill {
   right: calc(var(--toggle-inset) + 4px);
+}
+
+.main:has(> .browser-tools > :not([hidden]) ~ :not([hidden])) > .routines-pill {
+  right: calc(var(--toggle-inset) + 4px + 72px + 8px);
 }
 
 .routines-pill[hidden] {
@@ -20035,7 +20231,7 @@ html:not([data-theme="light"]) .skill-page-key {
 }
 
 .plan-island.is-open {
-  width: min(440px, calc(100% - 32px));
+  width: var(--plan-sheet, min(440px, calc(100% - 32px)));
   max-width: none;
   border-radius: 26px;
 }
@@ -20105,6 +20301,18 @@ html:not([data-theme="light"]) .skill-page-key {
   display: none;
 }
 
+/* During the closing morph the full-width sheet fades behind the returning capsule. */
+.plan-island.is-closing .plan-cap {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  display: flex;
+  width: var(--plan-cap-width);
+  /* The spring can undershoot the capsule's width; keep fitting words whole. */
+  max-width: none;
+  transform: translateX(-50%);
+}
+
 /* With no room beside the buttons, the ring alone; with no room even for that (a window narrower than the chat's least),
    none: a sliver of black squeezed between the buttons is worse than nothing. */
 .plan-island.is-crowded {
@@ -20127,6 +20335,8 @@ html:not([data-theme="light"]) .skill-page-key {
 
 .plan-label {
   position: relative;
+  /* Centre the visible letters beside the ring, accounting for the font's baseline space. */
+  top: -0.08em;
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -20214,8 +20424,12 @@ html:not([data-theme="light"]) .skill-page-key {
 }
 
 /* The panel: how far the plan has come, what the agent waits for, and every step with the proof it was closed with. */
+/* The panel lays out at its own width from the first frame, centred in the capsule as the capsule grows into it: its words
+   keep their lines while the box moves (plan-island.js sets --plan-sheet). */
 .plan-sheet {
   display: none;
+  width: var(--plan-sheet, 440px);
+  margin-left: calc(50% - var(--plan-sheet, 440px) / 2);
   padding: 8px 16px 14px;
 }
 
@@ -20627,7 +20841,7 @@ html:not([data-theme="light"]) .skill-page-key {
   z-index: 2;
   top: calc(var(--chat-gap) + 12px);
   bottom: 12px;
-  left: calc(var(--sidebar-size) - 9px);
+  left: calc(var(--sidebar-size) - 3px);
   width: 12px;
   cursor: col-resize;
 }
@@ -20640,8 +20854,9 @@ html:not([data-theme="light"]) .skill-page-key {
 .sidebar-resize::after {
   content: "";
   position: absolute;
+  pointer-events: none;
   top: 50%;
-  left: 3.5px;
+  left: -2.5px;
   width: 3px;
   height: 36px;
   margin-top: -18px;
@@ -20665,7 +20880,7 @@ html:not([data-theme="light"]) .skill-page-key {
 }
 
 .app.is-sidebar-resizing.is-sidebar-collapsed .sidebar-resize {
-  left: calc(var(--chat-gap) - 9px);
+  left: calc(var(--chat-gap) - 3px);
 }
 
 .app.is-sidebar-collapsed .sidebar-resize::after {
@@ -20861,7 +21076,7 @@ html:not([data-theme="light"]) .skill-page-key {
   display: none;
 }
 
-.app.is-browser-peek:not(.is-browser-open) .browser:not(.is-agent) .browser-view {
+.app.is-browser-peek:not(.is-browser-open) .browser:not(.is-agent) .browser-view.is-active {
   visibility: visible;
 }
 
@@ -21765,7 +21980,6 @@ html:not([data-theme="light"]) .tour :is([data-mark="x"], [data-mark="steam"], [
     transition: none !important;
   }
 }
-
 /* —— Phone access ——————————————————————————————————————————————————————
    The window a phone is read into. It is a card of the settings' own glass, small enough to stand over the sidebar's
    row: the code a camera reads at the top, what the app says of it under, and the phones it has let in below that.
@@ -22065,3 +22279,273 @@ html:not([data-theme="light"]) .tour :is([data-mark="x"], [data-mark="steam"], [
 .settings-mobile-url:empty {
   display: none;
 }
+
+/* The split keeps the app's own backdrop visible between the chat cards, as beside the browser. */
+.chat-split {
+  position: absolute;
+  z-index: 1;
+  top: var(--chat-gap);
+  bottom: var(--chat-gap);
+  right: var(--chat-gap);
+  left: var(--sidebar-size);
+  background: transparent;
+  border-radius: var(--chat-radius);
+  --split-left: calc((100% - 14px) / 2);
+  transition: none;
+}
+.chat-split[hidden] { display: none; }
+.app.is-sidebar-collapsed .chat-split { left: var(--chat-gap); }
+.app.is-browser-open .chat-split { right: calc(var(--chat-gap) * 2 + var(--browser-width, 520px)); }
+.app.has-split .chat-split > .main {
+  --composer-side-gap: 10px;
+  top: 0; bottom: 0; left: 0; right: auto;
+  width: var(--split-left);
+  border-radius: var(--chat-radius) 26px 26px var(--chat-radius);
+  min-width: var(--split-min, 470px);
+  transition: none;
+  overflow: clip;
+}
+.app.has-split .chat-split > .main.is-split-secondary {
+  left: calc(var(--split-left) + 14px);
+  width: calc(100% - var(--split-left) - 14px);
+  border-radius: 26px var(--chat-radius) var(--chat-radius) 26px;
+}
+.chat-split > .main.is-split-focused { box-shadow: var(--contour), var(--card-lift); }
+
+/* Each pane scopes its own popover anchors so menus and the effort slider stay in their own chat. */
+.is-split-secondary .composer-add {
+  anchor-name: --split-add;
+}
+.is-split-secondary .composer-mode {
+  anchor-name: --split-mode;
+}
+.is-split-secondary .composer-effort {
+  anchor-name: --split-effort;
+}
+.is-split-secondary .effort-panel {
+  position-anchor: --split-effort;
+}
+
+/* Split View toggle button in the main chat's top-right .browser-tools capsule and row hover action. */
+.split-toggle {
+  display: grid;
+  place-items: center;
+  width: var(--icon-button-size, 26px);
+  height: var(--icon-button-size, 26px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--icon-button-radius, 50%);
+  background: var(--icon-button-bg, transparent);
+  color: rgba(var(--fg-rgb), var(--icon-opacity, 0.78));
+  cursor: pointer;
+  transition: var(--icon-button-transition, color 0.2s ease, background-color 0.2s ease), transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.split-toggle:hover,
+.split-toggle:focus-visible {
+  color: rgba(var(--fg-rgb), var(--icon-hover-opacity, 1));
+}
+.split-toggle:active {
+  transform: scale(0.9);
+}
+.split-toggle .glyph {
+  width: 17px;
+  height: 17px;
+  overflow: visible;
+}
+.glyph-split .split-arrow {
+  transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.split-toggle:hover .glyph-split .split-arrow,
+.chat-action.is-split-action:not(:disabled):hover .glyph-split .split-arrow,
+.row-menu-item.is-split:hover .glyph-split .split-arrow {
+  transform: translateX(4px);
+}
+.chat-action[hidden] {
+  display: none;
+}
+
+/* Frosted-glass drop preview on the right half of the workspace when dragging a chat from the sidebar. */
+.split-drop-zone {
+  position: absolute;
+  z-index: 25;
+  top: calc(var(--chat-gap) + 8px);
+  right: calc(var(--chat-gap) + 8px);
+  bottom: calc(var(--chat-gap) + 8px);
+  width: calc((100% - var(--sidebar-size) - var(--chat-gap) - 14px) / 2 - 8px);
+  min-width: 380px;
+  border-radius: 24px calc(var(--chat-radius) - 4px) calc(var(--chat-radius) - 4px) 24px;
+  background: linear-gradient(135deg, rgba(var(--selection-rgb), 0.12), rgba(var(--fg-rgb), 0.04));
+  box-shadow:
+    inset 0 0 0 1.5px rgba(var(--selection-rgb), 0.35),
+    0 24px 64px rgba(0, 0, 0, calc(0.24 * var(--shadow)));
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.98);
+  transition:
+    opacity 0.24s cubic-bezier(0.32, 0.72, 0, 1),
+    transform 0.32s cubic-bezier(0.32, 0.72, 0, 1),
+    background 0.24s ease,
+    box-shadow 0.24s ease;
+}
+.app.is-sidebar-collapsed .split-drop-zone {
+  width: calc((100% - var(--chat-gap) * 2 - 14px) / 2 - 8px);
+}
+.split-drop-zone[hidden] {
+  display: none;
+}
+.split-drop-zone.is-armed {
+  pointer-events: auto;
+  opacity: 0.78;
+  transform: scale(0.99);
+}
+.split-drop-zone.is-over {
+  pointer-events: auto;
+  opacity: 1;
+  transform: none;
+  background: linear-gradient(135deg, rgba(var(--selection-rgb), 0.2), rgba(var(--fg-rgb), 0.07));
+  box-shadow:
+    inset 0 0 0 2px rgba(var(--selection-rgb), 0.65),
+    0 28px 72px rgba(0, 0, 0, calc(0.32 * var(--shadow)));
+}
+.split-drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 26px;
+  border-radius: 18px;
+  background: rgba(var(--fg-rgb), 0.06);
+  box-shadow: inset 0 0 0 1px rgba(var(--fg-rgb), 0.1);
+  color: var(--fg-primary);
+  font-size: 13.5px;
+  font-weight: 500;
+  pointer-events: none;
+  transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.split-drop-zone.is-over .split-drop-card {
+  transform: scale(1.05);
+}
+.split-drop-icon .glyph {
+  width: 26px;
+  height: 26px;
+  color: rgb(var(--selection-rgb));
+}
+
+.split-divider {
+  position: absolute; z-index: 20;
+  top: 0; bottom: 0; left: calc(var(--split-left) - 7px); width: 28px;
+  cursor: col-resize; touch-action: none; outline: none;
+}
+.split-divider::after {
+  content: ''; position: absolute; top: 50%; left: 50%;
+  width: 3px; height: 38px; border-radius: 3px;
+  transform: translate(-50%, -50%); background: rgba(var(--fg-rgb), 0.28);
+  transition: height 0.2s ease, background 0.2s ease;
+}
+.split-divider:hover::after, .split-divider:focus-visible::after { height: 54px; background: rgba(var(--fg-rgb), 0.6); }
+.split-divider:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -4px; border-radius: 14px; }
+.is-split-resizing { cursor: col-resize; user-select: none; }
+.is-split-resizing .chat-split > .main { pointer-events: none; }
+.split-pane-name {
+  position: absolute; z-index: 4; top: 18px; left: 95px; right: 95px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: 12px; font-weight: 500; text-align: center; color: var(--fg-secondary);
+  pointer-events: none;
+}
+/* A mask on the scrolling pane makes backdrop filters paint a sharp duplicate of selected text.
+   Keep the caption clear with the edge veil instead; its second layer preserves the scrollbar's original fade. */
+.is-split-secondary > .thread-view > .thread { scroll-padding-top: 56px; }
+.is-split-secondary > .thread-view::before {
+  height: 56px;
+  background:
+    linear-gradient(var(--chat-bg) 38px, transparent 56px) 0 0 / calc(100% - var(--scrollbar-hit-width)) 56px no-repeat,
+    linear-gradient(var(--chat-bg), transparent 70%) 0 0 / 100% calc(var(--composer-bottom-gap) + 12px) no-repeat;
+}
+.is-split-secondary > .routines-pill { right: calc(var(--toggle-inset) + 4px + 72px + 8px); }
+/* The pair frame already identifies the second open chat; its row keeps ordinary styling. */
+
+/* In Split View each pane's browser uses the existing .is-browser-peek mode over its own chat card,
+   keeping a 96px strip of the chat in sight on the left and hiding completely when closed so it never bleeds into the split gap. */
+.browser.is-split-browser:not(.is-peek),
+.app.has-split .browser:not(.is-split-browser):not(.is-peek) {
+  z-index: 0 !important;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.97);
+}
+.browser.is-split-browser:not(.is-peek):not(.is-agent) .browser-view {
+  visibility: hidden !important;
+}
+.app.has-split.is-browser-peek .browser:not(.is-split-browser) {
+  z-index: 5;
+  top: calc(var(--chat-gap) + 48px);
+  right: calc(var(--chat-gap) + var(--split-right, 470px) + 20px);
+  bottom: calc(var(--chat-gap) + 6px);
+  width: var(--browser-peek-width, var(--browser-width, 520px));
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+.app.has-split.is-split-browser-peek .browser.is-split-browser.is-peek {
+  z-index: 5;
+  top: calc(var(--chat-gap) + 48px);
+  right: calc(var(--chat-gap) + 6px);
+  bottom: calc(var(--chat-gap) + 6px);
+  width: var(--split-browser-peek-width, var(--browser-peek-width, 520px));
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+.app.is-split-browser-peek .browser.is-split-browser.is-peek .browser-card {
+  box-shadow: var(--contour), 0 30px 80px rgba(0, 0, 0, calc(0.42 * var(--shadow))), 0 6px 18px rgba(0, 0, 0, calc(0.2 * var(--shadow)));
+}
+.app.is-split-browser-peek .browser.is-split-browser.is-peek .browser-resize {
+  display: none;
+}
+.app.is-split-browser-peek .browser.is-split-browser.is-peek:not(.is-agent) .browser-view.is-active {
+  visibility: visible;
+}
+
+/* The split action is a third button: reserve its space before the text can reach behind it. */
+.chat-row:has(.chat-action.is-split-action:not([hidden])) { --chat-actions-width: 78px; }
+.chat-row:is(:hover, :focus-within, .is-confirming, .is-carding) .chat-meta {
+  min-width: var(--chat-actions-width, 52px);
+}
+
+/* A saved pair is only a workspace group. Each row retains its own actions and status. */
+.chat-pair {
+  position: relative;
+  margin: 4px 0 8px;
+  padding: 6px;
+  overflow: clip;
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px rgba(var(--fg-rgb), 0.12);
+  transition: background-color 220ms ease, box-shadow 220ms ease;
+}
+.chat-pair.is-active { box-shadow: inset 0 0 0 1px rgba(var(--fg-rgb), 0.22); }
+.chat-pair-head { display: flex; align-items: center; justify-content: space-between; min-height: 28px; padding: 0 4px 2px 8px; }
+.chat-pair-label { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 500; color: var(--fg-secondary); }
+.chat-pair-label .glyph { width: 14px; height: 14px; }
+.chat-pair > .chat-row { margin: 0; border-radius: 10px; }
+.chat-pair > .chat-row + .chat-row { margin-top: 2px; }
+.chat-pair > .chat-row.is-active { box-shadow: inset 0 0 0 1px rgba(var(--fg-rgb), 0.06); }
+.chat-pair > .chat-row:focus-visible { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+@media (prefers-reduced-motion: reduce) { .chat-pair { transition: none; } }
+
+.chat-split .composer { --composer-side-gap: 10px; }
+.chat-split .composer-toolbar { gap: 4px; }
+.chat-split .composer-folder { max-width: calc(100% - 20px); }
+@media (prefers-reduced-motion: reduce) {
+  .chat-split, .split-divider::after, .split-drop-zone { transition: none; }
+}
+.is-split-secondary > .top-tools[hidden] { display: none; }
+.is-split-secondary > .notes-pill {
+  left: 12px;
+  /* The ghost appears at once: Notes must not slide across it while a working mini is parked. */
+  transition: opacity 0.3s ease, scale 0.5s cubic-bezier(0.34, 1.5, 0.64, 1);
+}
+.is-split-secondary.has-split-mini > .notes-pill { left: 58px; }
