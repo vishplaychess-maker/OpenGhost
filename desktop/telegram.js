@@ -15,6 +15,7 @@ const KEY = 'telegram';
 const TOKEN = /^\d{6,}:[A-Za-z0-9_-]{20,}$/;
 // A turn can take a while; the user waiting on the phone is told when the app no longer has one to give.
 const TIMEOUT = 15 * 60 * 1000;
+const STARTUP = 15 * 1000;
 const TYPING = 4500;
 const PIECE = 4000;
 
@@ -84,6 +85,15 @@ function why(failure) {
  return text.replace(/\s+/g, ' ').trim().slice(0, 300) || 'Telegram did not accept the bot.';
 }
 
+// The network can swallow a call whole and nothing ever answers; a start attempt without a deadline would hang the
+// whole telegram surface forever, so the first call out is raced against a clock.
+function within(promise, message) {
+ let timer;
+ const clock = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), STARTUP); });
+ timer.unref?.();
+ return Promise.race([promise, clock]).finally(() => clearTimeout(timer));
+}
+
 // The run goes to the main window's page, which is made, unseen, when the app has none.
 function deliver(request) {
  waiting.push(request);
@@ -151,6 +161,7 @@ async function stopBot() {
 }
 
 async function startBot() {
+ console.error(`[tg] ${new Date().toISOString()} startBot begin enabled=${state.enabled} tokenLen=${state.token.length}`);
  await stopBot();
  error = '';
  me = '';
@@ -185,18 +196,26 @@ async function startBot() {
  });
  fresh.on('message', ctx => onMessage(fresh, ctx, mineEpoch).catch(() => {}));
  try {
-  const info = await fresh.telegram.getMe();
+  const info = await within(fresh.telegram.getMe(), 'Could not reach Telegram. Check the connection and try again.');
   if (mineEpoch !== epoch) return;
   fresh.botInfo = info;
   me = who(info.username) || info.first_name || '';
-  await fresh.launch({ dropPendingUpdates: true });
-  if (mineEpoch !== epoch) {
-   try { fresh.stop('telegram restarted'); } catch {}
-   return;
-  }
   running = true;
   error = '';
+  publish();
+  // Telegraf's launch stays pending for as long as the bot polls: its settling is the bot's death, not its birth.
+  // The run was announced above; the launch is left to end or fail on its own, and its failure is said when it does.
+  await fresh.launch({ dropPendingUpdates: true }).catch(failure => {
+   if (mineEpoch !== epoch) return;
+   running = false;
+   error = why(failure);
+   me = '';
+   try { fresh.stop('telegram failed'); } catch {}
+   if (bot === fresh) bot = null;
+   publish();
+  });
  } catch (failure) {
+  console.error(`[tg] ${new Date().toISOString()} startBot failed: ${why(failure)}`);
   if (mineEpoch !== epoch) return;
   running = false;
   error = why(failure);
@@ -261,7 +280,7 @@ async function update(changes = {}) {
   }
  }
  await save();
- if (restart) await startBot();
+ if (restart) startBot();
  else publish();
  return refused ? { ...view(), refused } : view();
 }
@@ -271,11 +290,14 @@ module.exports = {
  // there is none, changed?() — the tray follows whether the app is to stay }.
  setup(options) {
   host = options;
+  // The record is read before anything else answers, but the first start attempt is left to run on its own: waiting
+  // for it would hold every telegram call hostage to the network.
   loaded = host.store.read(KEY).then(raw => {
    const allowed = cleanAllowed(raw?.allowed);
    state = { enabled: !!raw?.enabled, allowed: allowed || [], token: openSecret(raw?.token) };
-   return startBot();
-  }).catch(() => {});
+   console.error(`[tg] ${new Date().toISOString()} store read: enabled=${state.enabled} allowed=${state.allowed.length} tokenLen=${state.token.length}`);
+   startBot().catch(failure => console.error(`[tg] ${new Date().toISOString()} startBot crashed: ${why(failure)}`));
+  }).catch(failure => console.error(`[tg] ${new Date().toISOString()} setup failed: ${why(failure)}`));
   ipcMain.handle('telegram:get', async event => { if (!mine(event)) return null; await loaded; return view(); });
   ipcMain.handle('telegram:set', async (event, changes) => {
    if (!mine(event) || !changes || typeof changes !== 'object') return null;

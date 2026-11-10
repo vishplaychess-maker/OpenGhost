@@ -512,6 +512,7 @@ const STRINGS = {
   'settings.telegram.off': 'Off',
   'settings.telegram.needToken': 'Add a bot token to start.',
   'settings.telegram.starting': 'Starting…',
+  'settings.telegram.unreachable': 'OpenGhost did not answer the Telegram request. Restart the app and try again.',
   'settings.telegram.badgeRunning': 'Running',
   'settings.telegram.badgeStopped': 'Stopped',
   'settings.telegram.badgeError': 'Error',

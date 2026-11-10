@@ -776,11 +776,25 @@ class Settings {
    timers[name] = setTimeout(async () => {
     const state = await bridge.set(changes).catch(() => null);
     if (state) this.takeTelegram(state);
+    else if (name === 'enabled') {
+     // The main process did not answer: the switch goes back to where the backend last said it stood, and the
+     // failure is said out loud.
+     this.telegramSwitch?.setAttribute('aria-checked', String(!!this.telegram?.enabled));
+     if (this.telegramStatus) {
+      this.telegramStatus.textContent = I18n.t('settings.telegram.unreachable');
+      this.telegramStatus.dataset.tone = 'error';
+     }
+    }
    }, after);
   };
   this.telegramToken.addEventListener('input', () => save('token', { token: this.telegramToken.value }, CHECK_DELAY));
   this.telegramAllowed.addEventListener('input', () => save('allowed', { allowed: this.telegramAllowed.value }, CHECK_DELAY));
-  this.telegramSwitch.addEventListener('click', () => save('enabled', { enabled: this.telegramSwitch.getAttribute('aria-checked') !== 'true' }, 0));
+  this.telegramSwitch.addEventListener('click', () => {
+   const on = this.telegramSwitch.getAttribute('aria-checked') !== 'true';
+   // The switch answers at once; the main process's word, when it comes, is the last word.
+   this.telegramSwitch.setAttribute('aria-checked', String(on));
+   save('enabled', { enabled: on }, 0);
+  });
   bridge.onChange?.(state => this.takeTelegram(state));
   this.refreshTelegram();
  }
