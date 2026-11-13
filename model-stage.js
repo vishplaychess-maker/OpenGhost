@@ -53,7 +53,7 @@ const LIFTED = { below: 140, margin: 24 };
 const FIT = 0.62;
 // Many models turn the list into a drum: rows away from its middle drift right, tilt and shrink a little.
 const DRUM = { reach: 320, shift: 34, tilt: 3.2, shrink: 0.07 };
-const GROUPS = { chatgpt: 'ChatGPT', openai: 'OpenAI API', grok: 'Grok', iteracompute: 'IteraCompute', zro: 'Zro', infron: 'Infron', tokenharbor: 'Token Harbor', yeta: 'Yeta', wusrouter: 'WusRouter', coarena: 'Coarena', anthropic: 'Anthropic', deepseek: 'DeepSeek', openrouter: 'OpenRouter', nvidia: 'NVIDIA', gemini: 'Google Gemini', venice: 'Venice', local: 'Local', custom: 'Custom API' };
+const GROUPS = { chatgpt: 'ChatGPT', openai: 'OpenAI API', grok: 'Grok', iteracompute: 'IteraCompute', zro: 'Zro', infron: 'Infron', tokenharbor: 'Token Harbor', yeta: 'Yeta', wusrouter: 'WusRouter', coarena: 'Coarena', nararouter: 'NaraRouter', anthropic: 'Anthropic', deepseek: 'DeepSeek', openrouter: 'OpenRouter', nvidia: 'NVIDIA', gemini: 'Google Gemini', venice: 'Venice', local: 'Local', custom: 'Custom API' };
 // A provider with many models of many companies shows the companies, and a company opens into its models on a press:
 // from how many models on, how its models come out (the nearest first, a step apart, only as many as can be seen), and
 // how long the list takes to settle after a company opens or shuts.
