@@ -10449,6 +10449,68 @@ h6.md-h {
   transform-origin: 100% 50%;
 }
 
+/* The pills over the models: one press looks the list through one provider. Like the row above them they are not part
+   of the list, so the drum leaves them flat and the arrows do not stop on them — and none of them changes the choice,
+   only what is seen of it. */
+.model-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 0 48px 10px 0;
+  user-select: none;
+}
+
+.model-tab {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  color: rgba(var(--fg-rgb), 0.55);
+  background: rgba(var(--fg-rgb), 0.06);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.model-tab:hover {
+  color: rgba(var(--fg-rgb), 0.82);
+  background: rgba(var(--fg-rgb), 0.1);
+}
+
+/* The provider being looked through is the accent's own, as the word that a model costs nothing is. */
+.model-tab[aria-pressed="true"] {
+  color: rgb(var(--composer-accent-rgb));
+  background: rgba(var(--composer-accent-rgb), 0.16);
+}
+
+.model-tab:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* The word over half a provider: that these models cost nothing, or that its list never said a price for them. It
+   stands under the provider's own name, which it splits, so it is set a step smaller and lighter than that name. */
+.model-cost {
+  padding: 9px 48px 2px 0;
+  color: rgba(var(--fg-rgb), 0.34);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 13px;
+  letter-spacing: 0.14em;
+  text-align: right;
+  text-transform: uppercase;
+  transform-origin: 100% 50%;
+  user-select: none;
+}
+
+/* The first word under a provider's name is not a second line above its models. */
+.model-group + .model-cost {
+  padding-top: 2px;
+}
+
 /* The word that a model costs nothing, set beside its sizes. It comes from what the provider says of the model, not
    from the filter, so it stands in the list whether or not the free-only look is on. */
 .model-free {
@@ -16015,6 +16077,22 @@ html.is-quick .viewer {
 .model-stage.is-quick .model-group {
   padding: 14px 44px 2px 0;
   font-size: 10px;
+}
+
+/* The card of its own the quick chat stands in is narrower, so the pills and the words of cost come to its measure. */
+.model-stage.is-quick .model-tabs {
+  gap: 5px;
+  padding: 0 40px 9px 0;
+}
+
+.model-stage.is-quick .model-tab {
+  padding: 3px 9px;
+  font-size: 10px;
+}
+
+.model-stage.is-quick .model-cost {
+  padding: 8px 44px 2px 0;
+  font-size: 9px;
 }
 
 .model-stage.is-quick .model-row {

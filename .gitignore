@@ -3,3 +3,4 @@ dist/
 dist-*/
 .cache/
 .og-build-cache/
+.openghost-data/

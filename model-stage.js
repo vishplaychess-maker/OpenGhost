@@ -100,6 +100,9 @@ const counted = count => I18n.t(count === 1 ? 'model.count.one' : 'model.count',
 const byName = (a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 // Whether a provider's models are shown by company: each says which company made it, and there are many.
 const grouped = models => models.length > COMPANY.from && models.every(model => model.group);
+// Which of the two sections a model stands in. What the service never priced is not called a paid thing: it stands
+// among the models that are not known to cost nothing.
+const cost = model => model.free === true ? 'free' : 'other';
 
 // The glyph travels on a curve, bent to one side like the ghost's flights, growing or shrinking on the way.
 function arc(el, from, to, { duration, delay = 0, spin = ARC.spin, bend = ARC.bend, easing = EASE.flight }) {
@@ -122,6 +125,9 @@ class ModelStage {
   this.rows = [];
   this.groups = [];
   this.head = null;
+  // Which provider the pills are looked through: '' for all of them. A way of looking, never of choosing.
+  this.provider = '';
+  this.tabs = null;
   this.companies = new Map();
   this.typed = { text: '', at: 0 };
   this.settling = 0;
@@ -158,10 +164,10 @@ class ModelStage {
    const row = event.target.closest('.model-row');
    if (row && this.state === 'open') this.pick(row);
   });
-  // A press on the list between the models closes it, the same as a press on the veil. The row over them is a control,
-  // not one of the between places: it changes the look instead.
+  // A press on the list between the models closes it, the same as a press on the veil. The rows over them are controls,
+  // not one of the between places: they change the look instead.
   this.list.addEventListener('pointerdown', event => {
-   if (!event.target.closest('.model-row, .model-confirm, .model-filter')) this.cancel();
+   if (!event.target.closest('.model-row, .model-confirm, .model-filter, .model-tabs')) this.cancel();
   });
   this.list.addEventListener('scroll', () => this.scheduleBend(true), { passive: true });
   root.addEventListener('pointermove', event => { this.pointer = { x: event.clientX, y: event.clientY }; });
@@ -180,7 +186,7 @@ class ModelStage {
  current() {
   const own = this.rows.find(row => row.dataset.model === this.chat.model);
   if (own) return own;
-  const model = this.settings.find(this.chat.model), company = model && this.companies.get(`${model.provider}/${model.group}`);
+  const model = this.settings.find(this.chat.model), company = model && this.companies.get(`${model.provider}/${model.group}/${cost(model)}`);
   return company?.row || this.rows.find(row => row.dataset.model) || this.rows[0] || null;
  }
 
@@ -228,45 +234,62 @@ class ModelStage {
   return row;
  }
 
- // Models come grouped by provider, under a small label once there is more than one provider. A provider with the
- // models of many companies shows the companies, by name; only the company of the chat's model starts open.
+ // Models come by provider, and a provider's models by what they cost: those the service prices at nothing under
+ // "Free", all the rest under "Other". A provider with the models of many companies shows the companies inside each of
+ // the two, by name, and a company whose models cost both stands in both — each side counting only its own. Only the
+ // company the chat's model is in starts open. Above the list, the pills look through one provider at a time.
  build() {
   this.list.setAttribute('aria-label', I18n.t('model'));
   const all = this.settings.models;
   // Only the models that cost nothing, when the picker is asked to look that way. A change of looking, not of using:
   // the chat keeps the model it is on, free or not, and the composer still names it.
-  const models = this.settings.freeOnly ? all.filter(model => model.free === true) : all;
-  const providers = [...new Set(models.map(model => model.provider))];
+  const priced = this.settings.freeOnly ? all.filter(model => model.free === true) : all;
+  const offered = [...new Set(priced.map(model => model.provider))];
+  // A provider whose models all cost something has none to show under the free look, and its pill goes with them; the
+  // filter then comes back to the whole rather than holding a list of nothing.
+  if (this.provider && !offered.includes(this.provider)) this.provider = '';
+  const shown = this.provider ? priced.filter(model => model.provider === this.provider) : priced;
+  const providers = [...new Set(shown.map(model => model.provider))];
   const chosen = this.settings.find(this.chat.model);
   const slots = [];
   this.rows = [];
   this.groups = [];
   this.companies = new Map();
   const add = row => { this.rows.push(row); slots.push(slot(row)); };
+  // A word standing over the rows under it. Like the rows, these rise as the list opens and bend as it scrolls, so
+  // they go in the same account of them; `under` says which half of the cost a word of that kind stands for.
+  const over = (className, provider, text, under = '') => {
+   const label = document.createElement('div');
+   label.className = className;
+   label.dataset.provider = provider;
+   if (under) label.dataset.cost = under;
+   label.textContent = text;
+   this.groups.push(label);
+   slots.push(slot(label));
+  };
   for (const provider of providers) {
-   const own = models.filter(item => item.provider === provider);
-   if (providers.length > 1) {
-    const label = document.createElement('div');
-    label.className = 'model-group';
-    label.dataset.provider = provider;
-    label.textContent = GROUPS[provider] || provider;
-    this.groups.push(label);
-    slots.push(slot(label));
-   }
-   if (!grouped(own)) {
-    for (const model of own) add(this.modelRow(model));
-    continue;
-   }
-   for (const name of [...new Set(own.map(model => model.group))].sort(byName)) {
-    const company = { key: `${provider}/${name}`, provider, name, models: own.filter(model => model.group === name), open: false, rows: [], row: null };
-    company.row = this.companyRow(company);
-    this.companies.set(company.key, company);
-    add(company.row);
-    if (chosen?.provider !== provider || chosen.group !== name) continue;
-    company.open = true;
-    company.row.setAttribute('aria-expanded', 'true');
-    company.rows = company.models.map(model => this.modelRow(model, company));
-    for (const row of company.rows) add(row);
+   const own = shown.filter(item => item.provider === provider);
+   // One provider's name over the whole list would only repeat the pill that was just pressed.
+   if (providers.length > 1) over('model-group', provider, GROUPS[provider] || provider);
+   for (const side of ['free', 'other']) {
+    const part = own.filter(model => cost(model) === side);
+    if (!part.length) continue;
+    over('model-cost', provider, I18n.t(side === 'free' ? 'model.free.group' : 'model.other.group'), side);
+    if (!grouped(part)) {
+     for (const model of part) add(this.modelRow(model));
+     continue;
+    }
+    for (const name of [...new Set(part.map(model => model.group))].sort(byName)) {
+     const company = { key: `${provider}/${name}/${side}`, provider, name, side, models: part.filter(model => model.group === name), open: false, rows: [], row: null };
+     company.row = this.companyRow(company);
+     this.companies.set(company.key, company);
+     add(company.row);
+     if (chosen?.provider !== provider || chosen.group !== name || cost(chosen) !== side) continue;
+     company.open = true;
+     company.row.setAttribute('aria-expanded', 'true');
+     company.rows = company.models.map(model => this.modelRow(model, company));
+     for (const row of company.rows) add(row);
+    }
    }
   }
   this.ask = document.createElement('div');
@@ -274,17 +297,59 @@ class ModelStage {
   this.ask.setAttribute('role', 'alertdialog');
   this.askSlot = slot(this.ask);
   this.askSlot.classList.add('is-folded');
-  // Over the models, and outside the drum and the rows: the look that keeps only what costs nothing.
+  // Over the models, and outside the drum and the rows: the look that keeps only what costs nothing, and the pills that
+  // look through one provider. Both stand where the models do not, so neither is a row the glyph can come to rest on.
   this.head = slot(this.filterRow());
-  if (!models.length) {
+  this.tabs = offered.length > 1 ? this.tabRow(offered) : null;
+  const tabs = this.tabs ? [slot(this.tabs)] : [];
+  if (!shown.length) {
    const note = document.createElement('div');
    note.className = 'model-empty';
    note.textContent = I18n.t(this.settings.freeOnly ? 'model.free.none' : 'model.none');
    slots.push(slot(note));
   }
-  this.list.replaceChildren(this.head, ...slots, this.askSlot);
+  this.list.replaceChildren(this.head, ...tabs, ...slots, this.askSlot);
   this.list.scrollTop = 0;
   this.marked = null;
+ }
+
+ // The pills above the models: the whole list, then one for every provider it can show. A press changes what is looked
+ // at, never what is chosen — the chat keeps its model, whichever pill it happens to stand under. Providers that hold
+ // no models in this view are not offered, so the row stays as wide as the choices really are.
+ tabRow(offered) {
+  const row = document.createElement('div');
+  row.className = 'model-tabs';
+  const pill = (id, name) => {
+   const tab = document.createElement('button');
+   tab.type = 'button';
+   tab.className = 'model-tab';
+   tab.dataset.provider = id;
+   tab.textContent = name;
+   tab.setAttribute('aria-pressed', String(this.provider === id));
+   tab.addEventListener('click', () => this.setProvider(id));
+   row.append(tab);
+  };
+  pill('', I18n.t('model.all'));
+  for (const provider of offered) pill(provider, GROUPS[provider] || provider);
+  return row;
+ }
+
+ // The list is built again under the chosen provider, exactly as it is under the free look: the pill that was pressed
+ // keeps the keyboard, the rows rise from where they now stand, and the chat's model keeps the glyph wherever the new
+ // list puts it — out of view under a pill that does not hold it, which is the truth of the choice.
+ setProvider(id) {
+  if (this.provider === id) return;
+  this.provider = id;
+  this.dropFlyer();
+  this.build();
+  this.place();
+  this.typed = { text: '', at: 0 };
+  const current = this.current(), own = this.rows.find(row => row.dataset.model === this.chat.model);
+  this.middle(current);
+  this.rest(current);
+  if (own) this.mark(own);
+  const pill = [...this.list.querySelectorAll('.model-tab')].find(tab => tab.dataset.provider === this.provider);
+  pill?.focus({ preventScroll: true });
  }
 
  // The row above the models: a switch for the free-only look, named beside it. The whole row answers a press.
