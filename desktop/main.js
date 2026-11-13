@@ -327,6 +327,9 @@ ipcMain.handle('theme:set', (event, choice) => {
 });
 ipcMain.handle('tool:run', (event, id, name, args, cwd, ticket) => fromApp(event) ? Tools.runTool(id, name, args, cwd, event.sender, ticket) : { error: 'Not allowed' });
 ipcMain.handle('tool:authorize', (event, name, args) => fromApp(event) ? Tools.authorize(name, args, event.sender) : { error: 'Not allowed' });
+// One line in the agent's record of what it did on this computer, written by the app's own folder. Nothing comes back:
+// a page that is telling the truth about a switch does not need to wait for the disk to agree.
+ipcMain.on('app:log', (event, row) => { if (fromApp(event)) Tools.logLine(row); });
 ipcMain.on('browser:shown', (event, value) => { if (fromApp(event)) Browser.setShown(value); });
 ipcMain.handle('tool:cancel', (event, id) => { if (fromApp(event)) Tools.cancel(id); });
 ipcMain.handle('tool:environment', event => fromApp(event) ? Tools.environment() : null);

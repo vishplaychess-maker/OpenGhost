@@ -175,7 +175,7 @@ async function main() {
  const entry = { content: '', steps: [] }, shown = [], conv = { id: 'fixture', record: { id: 'fixture' }, tokens: 0 };
  const turn = { config, controller: new AbortController(), part: { entry, view: { stream: { push: text => shown.push(text) } } } };
  const chat = Object.create(c.window.Chat.prototype);
- Object.assign(chat, { agent: () => false, system: async () => [], history: () => request.messages, notes: () => [], seam: () => 0, session: () => 'fixture-session', dismissGhost() {}, showRetry() { this.retryShown = true; } });
+ Object.assign(chat, { agent: () => false, system: async () => [], history: () => request.messages, notes: () => [], seam: () => 0, session: () => 'fixture-session', dismissGhost() {}, showRetry() { this.retryShown = true; }, settings: { fallback: '', resolve: id => id, find: () => null } });
  const response = await chat.request(conv, turn);
  check('Chat.request continues after overload without exposing a fatal error', response.finish === 'stop' && chatRun.posts === 2 && entry.content === 'RECOVERED');
  check('Only the recovered answer is kept in chat history and shown once', entry.steps.length === 1 && same(shown, ['RECOVERED']) && chat.retryShown);

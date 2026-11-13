@@ -98,6 +98,32 @@ async function endure(config, run, { signal, onRetry, retryBudget = { used: 0 } 
  }
 }
 
+// The other model. A door that is busy, or an account whose share of tokens is spent, is not a model to wait out when
+// the user named another one: the same request goes across once, and only while nothing of this answer has been shown.
+const FALLBACK_WAIT = 5000;
+const FALLBACK_STATUS = new Set([429, 500, 502, 503, 504]);
+
+// Why the first model failed, in the words the switch and the notice both act on: 'quota' when waiting cannot help,
+// 'rate' when the door said too many requests, 'server' when it said it cannot answer right now — and nothing at all
+// when the failure is the request's own (a wrong key, a refused piece of content) or the user stopped it. A local
+// server's 500 is its own answer about the request, as in transient() above.
+function why(error, provider) {
+ if (!error || error.name === 'AbortError') return '';
+ const code = String(error.code || '').trim().toLowerCase();
+ if (QUOTA.has(code)) return 'quota';
+ const status = Number(error.status) || 0;
+ if (status) {
+  if (provider === 'local' && status === 500) return '';
+  if (status === 429) return 'rate';
+  return FALLBACK_STATUS.has(status) ? 'server' : '';
+ }
+ return TRANSIENT_CODES.has(code) ? 'server' : '';
+}
+
+// Only a stream that said nothing may be sent to another model. Half an answer the user is already reading stays
+// where it is, and the failure is shown as it is - the same rule endure() holds to when it replays at all.
+const silent = error => !error?.partial || !(error.partial.content || error.partial.reasoning || error.partial.toolCalls?.length);
+
 // `once`: a request nothing will follow, so there is no point in paying a provider to keep its start in a cache.
 function viaMain(config, { messages, tools, signal, onReasoning, onContent, onActivity, maxTokens, session, once = false, aside = false }) {
  if (!bridge) return Promise.reject(new ProviderError(I18n.t('error.desktop', { provider: NAMES[config.provider] })));
@@ -155,12 +181,46 @@ function heard(begin, onContent, onReasoning) {
 async function stream(config, options) {
  // A model whose window is smaller than the agent's instructions would lose them without a word: said before it is asked.
  if (config.window && config.window < NEED) throw new ProviderError(I18n.t('error.window', { window: config.window.toLocaleString('en-US'), need: NEED.toLocaleString('en-US') }));
- const { messages, tools, signal, onReasoning, onContent, onRetry, retryBudget } = options;
- const result = await endure(config, begin => {
+ const { messages, tools, signal, onReasoning, onContent, onRetry, onFallback, retryBudget, fallback } = options;
+ const send = asked => begin => {
   const live = heard(begin, onContent, onReasoning);
-  if (config.provider !== 'deepseek') return viaMain(config, { ...options, ...live });
-  return DeepSeek.streamChat({ key: config.key, model: config.model, effort: config.effort, vision: config.vision, messages, tools, signal, ...live });
- }, { signal, onRetry, retryBudget });
+  if (asked.provider !== 'deepseek') return viaMain(asked, { ...options, ...live });
+  return DeepSeek.streamChat({ key: asked.key, model: asked.model, effort: asked.effort, vision: asked.vision, messages, tools, signal, ...live });
+ };
+ // With another model named, the first one gets its short chance and no more: the ladder of waits belongs to a chat
+ // that has nowhere else to go. Without one, nothing here changes what it did before.
+ const budget = fallback ? { used: WAITS.length } : retryBudget;
+ let result = null, problem = null;
+ try {
+  result = await endure(config, send(config), { signal, onRetry, retryBudget: budget });
+ } catch (error) {
+  problem = error;
+ }
+ if (!result) {
+  // The reason decides the hurry. A spent quota switches at once, because the day does not refill within a minute of
+  // waiting. A door that is busy — rate limited, or unable to answer right now — is asked once more after a short
+  // wait first, because a spike that clears in seconds should not cost a switch and a notice the user did not need.
+  const reason = fallback && silent(problem) ? why(problem, config.provider) : '';
+  if (!reason) throw problem;
+  if (reason !== 'quota') {
+   onRetry?.();
+   await pause(FALLBACK_WAIT, signal);
+   try { result = await endure(config, send(config), { signal, onRetry, retryBudget: budget }); }
+   catch (again) { problem = again; }
+   // What the second try answered is not always worth moving on for: a refusal the fallback would meet the same way
+   // is told as it is, in the first model's words.
+   if (!result && !why(problem, config.provider)) throw problem;
+  }
+  if (!result) {
+   const moved = why(problem, config.provider) || reason;
+   onFallback?.({ from: config, to: fallback, reason: moved, error: problem });
+   // One attempt at the other model, with no ladder of its own: if it fails too, its failure is what the user is told,
+   // and nothing here tries a third.
+   result = await endure(fallback, send(fallback), { signal, onRetry, retryBudget: { used: WAITS.length } });
+   if (retryBudget) retryBudget.used = 0;
+   return counted(fallback, result);
+  }
+ }
  if (retryBudget) retryBudget.used = 0;
  return counted(config, result);
 }

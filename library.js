@@ -332,14 +332,15 @@ class Library {
   return this.queue(id, async () => {
    const data = await this.store.read(`mini/${id}`).catch(() => null);
    const body = data?.sealed ? await ChatLock.open(this.keys.get(id), data.sealed) : data;
-   return { messages: Array.isArray(body?.messages) ? body.messages : [], tokens: Number(body?.tokens) || 0, seen: Number(body?.seen) || 0, ...(typeof body?.effort === 'string' ? { effort: body.effort } : {}), ...(['standard', 'fast'].includes(body?.speed) ? { speed: body.speed } : {}), ...(['ask', 'auto', 'full'].includes(body?.mode) ? { mode: body.mode } : {}) };
+   return { messages: Array.isArray(body?.messages) ? body.messages : [], tokens: Number(body?.tokens) || 0, seen: Number(body?.seen) || 0, ...(typeof body?.effort === 'string' ? { effort: body.effort } : {}), ...(['standard', 'fast'].includes(body?.speed) ? { speed: body.speed } : {}), ...(['ask', 'auto', 'full'].includes(body?.mode) ? { mode: body.mode } : {}), ...(typeof body?.fallback === 'string' ? { fallback: body.fallback } : {}) };
   }).then(body => body || { messages: [], tokens: 0, seen: 0 });
  }
 
- saveSide(id, { messages, tokens = 0, seen = 0, effort = '', speed = '', mode = '' }) {
+ saveSide(id, { messages, tokens = 0, seen = 0, effort = '', speed = '', mode = '', fallback = null }) {
   const chat = this.chat(id), key = chat?.lock ? this.keys.get(id) : null;
   if (!chat || (chat.lock && !key)) return Promise.resolve();
-  const body = { messages, tokens, seen, ...(effort ? { effort } : {}), ...(['standard', 'fast'].includes(speed) ? { speed } : {}), ...(['ask', 'auto', 'full'].includes(mode) ? { mode } : {}) };
+  // A mini chat's fallback is kept only when it was named — including when it was named as none, which is a choice.
+  const body = { messages, tokens, seen, ...(effort ? { effort } : {}), ...(['standard', 'fast'].includes(speed) ? { speed } : {}), ...(['ask', 'auto', 'full'].includes(mode) ? { mode } : {}), ...(typeof fallback === 'string' ? { fallback } : {}) };
   return this.queue(id, async () => this.store.write(`mini/${id}`, key ? { version: 1, sealed: await ChatLock.seal(key, body) } : { version: 1, ...body }));
  }
 
@@ -451,6 +452,8 @@ class Library {
   if (chat.model) copy.model = chat.model;
   if (chat.effort) copy.effort = chat.effort;
   if (['standard', 'fast'].includes(chat.speed)) copy.speed = chat.speed;
+  // A named fallback travels with the fork; so does a chat that asked for none, which is a choice of its own.
+  if (typeof chat.fallback === 'string') copy.fallback = chat.fallback;
   const [notes, side, brief] = await Promise.all([this.notes(id), this.side(id), this.record(id)]);
   const seal = async body => key ? { version: 1, sealed: await ChatLock.seal(key, body) } : { version: 1, ...body };
   // The fork keeps copies of the pictures the agent showed, under its own name, so deleting the chat it came from

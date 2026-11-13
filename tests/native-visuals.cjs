@@ -106,6 +106,7 @@ async function main() {
   const turn = { config: { id: 'fixture', provider: 'openai' }, controller: new AbortController(), part: { entry, view }, parts: [], approvals: new Set(), queue: [], pills: [] };
   const chat = Object.create(c.window.Chat.prototype); let requests = 0;
   Object.assign(chat, { agent: () => false, system: async () => [], history: () => [], notes: () => [], seam: () => 0, session: () => 'fixture', dismissGhost() {}, showGhost() {},
+   settings: { fallback: '', resolve: id => id, find: () => null },
    compactIfNeeded: async () => {}, planWatch: () => false, planNudge: () => '', planBack: () => '', proofAudit: () => '', save() {},
    useTool: async () => { events.push(['tool', entry.content]); return 'fixture result'; },
   });

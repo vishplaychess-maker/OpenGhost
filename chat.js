@@ -855,6 +855,37 @@ class Chat {
   return this.settings.resolve(conv?.record?.model || conv?.model);
  }
 
+ // The model that answers when this chat's own is busy or has spent its share of tokens: the chat's first, then the
+ // application's, then none at all. An empty choice is a real one - a chat can say it wants no safety net - and a
+ // model that is no longer connected is not offered as one either.
+ fallbackOf(conv) {
+  const wanted = conv?.record?.fallback ?? conv?.fallback;
+  const id = wanted === '' ? '' : (wanted || this.settings.fallback || '');
+  return id && this.settings.find(id) ? id : '';
+ }
+
+ // That model as a request: the same thinking level and speed the chat asked for, under its own provider, key and
+ // window. Nothing is offered once the turn has already moved to it — a model is no safety net against itself.
+ fallbackConfig(conv, away) {
+  const id = this.fallbackOf(conv);
+  if (!id || id === this.modelOf(conv) || id === away?.id) return null;
+  const preferred = conv?.record?.effort || conv?.effort || (conv?.record ? this.settings.legacyEffort : '') || '';
+  const config = this.settings.configFor(id, preferred);
+  if (!config.provider) return null;
+  const wanted = conv?.record?.speed || conv?.speed || 'standard';
+  return { ...config, speed: config.fast && wanted === 'fast' ? 'fast' : 'standard' };
+ }
+
+ setFallback(id) {
+  const conv = this.active;
+  if (!conv || conv.locked) return false;
+  const value = id && this.settings.find(id) ? id : '';
+  conv.fallback = value;
+  if (conv.record) this.library.update(conv.id, { fallback: value });
+  this.onChange();
+  return true;
+ }
+
  config(conv) {
   // Existing chats without the field keep their pre-update preference until it is migrated by load().
   const preferred = conv?.record?.effort || conv?.effort || (conv?.record ? this.settings.legacyEffort : '') || '';
@@ -1809,6 +1840,9 @@ class Chat {
     signal: turn.controller.signal,
     session: this.session(conv),
     retryBudget: turn.retryBudget ||= { used: 0 },
+    // The other model, and the word taken when the answer moves to it. Both are inert unless a fallback was named.
+    fallback: this.fallbackConfig(conv, turn.config),
+    onFallback: moved => this.fellBack(conv, turn, view, moved),
     onContent: (delta, stream) => {
      if (!stream.content.trim()) return;
      turn.text = true;
@@ -2368,6 +2402,42 @@ class Chat {
   this.finishNotice(notice, true, entry.count);
   this.save(conv);
   return true;
+ }
+
+ // The line a switch leaves in the chat: why the first model was not answered by, in its own word, and the name the
+ // answer went on to. It stays with the chat, set like the summary's line, because a fallback that keeps firing is
+ // exactly the thing a person wants to see the next morning — and it is the reason to change the first model.
+ fellBack(conv, turn, view, { from, to, reason }) {
+  const entry = { role: 'fallback', from: from.id, to: to.id, name: to.name || '', reason, at: Date.now() };
+  // From here the turn belongs to the other model: an agent's turn asks several times, and to go back to the first
+  // for the next question would fail the same way, and print this line again. The reply already being written is
+  // marked with its author too, so the stats and any later reader know which model said it.
+  turn.config = to;
+  if (turn.part?.entry) turn.part.entry.model = to.id;
+  // It stands above the reply it explains, not after it: the answer the user reads came from the other model.
+  const at = conv.messages.indexOf(turn?.part?.entry);
+  if (at >= 0) conv.messages.splice(at, 0, entry);
+  else conv.messages.push(entry);
+  const el = this.fallbackNotice(entry);
+  this.nodes.set(entry, el);
+  if (view?.el?.isConnected) view.el.before(el);
+  else conv.list?.append(el);
+  this.viewOf(conv)?.followBottom?.();
+  if (this.library.chat(conv.id)) this.library.saveMessages(conv.id, conv.messages, conv.tokens);
+  // What moved, where to and why — into the same folder the desktop tools write to, so one place holds the record of
+  // this machine. Nothing is asked of the model for it, and a log that will not write never stops the answer.
+  window.openghost?.log?.({ kind: 'fallback', chat: String(conv.id || ''), from: from.id, to: to.id, reason, at: new Date().toISOString() });
+ }
+
+ fallbackNotice(entry) {
+  const el = document.createElement('div');
+  el.className = 'thread-compact thread-fallback';
+  const text = document.createElement('span');
+  text.className = 'thread-compact-text';
+  const name = entry.name || this.settings.find(entry.to)?.name || entry.to;
+  text.textContent = I18n.t(`fallback.${entry.reason}`, { name });
+  el.append(text);
+  return el;
  }
 
  // The mark a summary leaves in the chat: sheets put together, seen from their edge, and under them how many messages
@@ -3386,6 +3456,7 @@ class Chat {
   }
   if (entry.role === 'user') return this.userMessage(this.promptOf(entry));
   if (entry.role === 'compact') return this.compactNotice(false, null, entry.count);
+  if (entry.role === 'fallback') return this.fallbackNotice(entry);
   if (entry.role === 'fork') return this.forkNotice(entry);
   if (entry.role === 'reminder' || entry.role === 'noted') return NotePill.build(entry);
   if (entry.role === 'routine') return RoutinePill.build(entry);

@@ -2895,6 +2895,17 @@ ghost-thinking {
   animation: message-in 0.35s var(--motion-easing) both;
 }
 
+/* The line an answer leaves behind when it came by the other model: the same quiet as the summary's line, a little
+   smaller because it says one thing and folds nothing away. It stays with the chat on purpose — a fallback that keeps
+   firing is the reason to change the first model, and that is worth being able to see afterwards. */
+.thread-fallback {
+  gap: 4px;
+  padding: 3px 0 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: rgba(var(--fg-rgb), 0.46);
+}
+
 .thread-compact-text b {
   color: rgba(var(--fg-rgb), 0.62);
   font-weight: 560;
@@ -16239,6 +16250,24 @@ html.is-quick .viewer {
 [data-theme="light"] .lang-menu {
   --lang-menu-bg: rgba(255, 255, 255, 0.9);
   --lang-menu-rim: rgba(20, 30, 60, 0.09);
+}
+
+/* The fallback's list holds models rather than languages — as many as every connected provider sells — so it scrolls
+   in place and keeps the same glass, which makes the two pickers read as one control. */
+.general-fallback .lang-menu {
+  max-height: min(360px, 55vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* The language list moves its highlight with its own clock; this one is a shorter list of the same shape, so a plain
+   transition does the same job without a second animator. */
+.general-fallback .lang-glide {
+  opacity: 0;
+  transition:
+    transform 0.12s cubic-bezier(0.32, 0.72, 0, 1),
+    height 0.12s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 0.12s ease-out;
 }
 
 .lang-menu:popover-open {

@@ -200,8 +200,167 @@ class TreeSettings {
  }
 }
 
+// The model that answers when the one you asked for is busy, or has spent its share of tokens for the day. Two
+// choices sit here: the application's, which works with no chat touched, and one for this chat alone, which comes
+// first. Naming them is all this page does — whether a switch is owed at all, and the one attempt it is worth, live
+// in Providers.stream(), where the answer has not yet appeared on screen.
+const ARROW = '<svg class="lang-arrows" viewBox="0 0 10 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.2 5.2L5 2.4l2.8 2.8M2.2 8.8L5 11.6l2.8-2.8"/></svg>';
+const CHECK = '<svg class="lang-check" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.6 6.3l2.3 2.3 4.6-4.9"/></svg>';
+const TICK = (() => {
+ const box = document.createElement('div');
+ box.innerHTML = CHECK;
+ return box.firstElementChild;
+})();
+
+// Each pane's listeners go on once, however often this page is built again over the same elements.
+const watched = new WeakSet();
+
+class FallbackSettings {
+ constructor(root, settingsOf, chatOf) {
+  this.root = root;
+  this.settingsOf = settingsOf;
+  this.chatOf = chatOf;
+  this.panes = new Map();
+  for (const kind of ['global', 'chat']) {
+   const button = root.querySelector(`.fallback-${kind}-button`);
+   const menu = root.querySelector(`.fallback-${kind}-menu`);
+   this.panes.set(kind, { button, menu, now: root.querySelector(`#settings-fallback${kind === 'chat' ? '-chat' : ''}-now`) });
+  }
+  this.watch(root);
+  // The list of models changes when a key is added or a provider's list is read again.
+  const settings = this.settings;
+  const prior = settings?.onModels;
+  if (settings) settings.onModels = () => { prior?.(); this.refresh(); };
+  this.refresh();
+ }
+
+ // One press picks, and the list closes on whatever was chosen — including None, which is a choice of its own.
+ watch(root) {
+  if (watched.has(root)) return;
+  watched.add(root);
+  for (const pane of this.panes.values()) pane.glide = pane.menu.appendChild(document.createElement('span'));
+  for (const [kind, { button, menu, glide }] of this.panes) {
+   glide.className = 'lang-glide';
+   glide.setAttribute('aria-hidden', 'true');
+   glide.style.opacity = '0';
+   button.addEventListener('click', () => {
+    this.fill(kind);
+    menu.showPopover();
+    // The rows have sizes only once the list is open, so the highlight is put on the chosen one here — and the
+    // keyboard starts there too, rather than at the top of the list.
+    const chosen = menu.querySelector('.lang-option[aria-selected="true"]');
+    this.move(glide, chosen);
+    chosen?.focus({ preventScroll: true });
+    chosen?.scrollIntoView({ block: 'nearest' });
+   });
+   menu.addEventListener('toggle', event => button.setAttribute('aria-expanded', String(event.newState === 'open')));
+   menu.addEventListener('pointerover', event => this.move(glide, event.target.closest('.lang-option')));
+   menu.addEventListener('pointerleave', () => { glide.style.opacity = '0'; });
+   menu.addEventListener('focusin', event => this.move(glide, event.target.closest('.lang-option')));
+   menu.addEventListener('click', event => {
+    const option = event.target.closest('.lang-option');
+    if (!option) return;
+    this.pick(kind, option.dataset.model || '');
+    menu.hidePopover();
+   });
+   // The rows glide on the keyboard as they do under the pointer: the list is a real one, and a person choosing a
+   // safety net with the keys should not have to reach for the mouse to finish it.
+   menu.addEventListener('keydown', event => {
+    if (event.key === 'Escape') return menu.hidePopover();
+    const rows = [...menu.querySelectorAll('.lang-option')];
+    if (!rows.length || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const at = rows.indexOf(document.activeElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1
+     : event.key === 'ArrowDown' ? (at < 0 ? 0 : (at + 1) % rows.length)
+      : (at <= 0 ? rows.length - 1 : at - 1);
+    rows[next].focus();
+   });
+  }
+ }
+
+ get settings() { return this.settingsOf(); }
+
+ // The chat is built after this page is, so asking before then means only that no chat is open yet — the same answer
+ // a window without one would give.
+ get chat() {
+  try { return this.chatOf(); } catch { return null; }
+ }
+
+ // A row of the list: the model's name, and beside it the provider it belongs to, because two providers sell the same
+ // model under the same name and the difference is the whole point of choosing one.
+ option(id, name, note, chosen) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'lang-option';
+  button.setAttribute('role', 'option');
+  button.tabIndex = -1;
+  button.dataset.model = id;
+  button.setAttribute('aria-selected', String(id === chosen));
+  const title = document.createElement('span');
+  title.className = 'lang-name';
+  title.textContent = name;
+  const under = document.createElement('span');
+  under.className = 'lang-note';
+  under.textContent = note;
+  // The tick the language list uses, so the choice in use is marked the same way everywhere. A model's name is what
+  // its provider sent, so it goes in as text and never through markup.
+  button.append(title, under, TICK.cloneNode(true));
+  return button;
+ }
+
+ fill(kind) {
+  const { menu, glide } = this.panes.get(kind);
+  const models = this.settings?.models || [];
+  const chosen = this.shown(kind);
+  // The rows are written anew each time the button is pressed, because a key added since the last look changes them;
+  // the highlight is the one element that stays and simply moves to the row it is on.
+  menu.replaceChildren(
+   this.option('', I18n.t('settings.fallback.none'), '', chosen),
+   ...models.map(model => this.option(model.id, model.name || model.id, window.Providers?.NAMES?.[model.provider] || model.provider, chosen)),
+   glide,
+  );
+ }
+
+ // The one highlight of the list, set to the row the pointer or the keyboard is on.
+ move(glide, option) {
+  if (!option) return;
+  glide.style.opacity = '1';
+  glide.style.height = `${option.offsetHeight}px`;
+  glide.style.transform = `translateY(${option.offsetTop}px)`;
+ }
+
+ // What the button says. For this chat, a chat that named none says None even when the application named a model —
+ // that is what an override means, and hiding it would be a lie about what will happen.
+ shown(kind) {
+  if (kind === 'global') return this.settings?.fallback || '';
+  const conv = this.chat?.active;
+  if (!conv) return '';
+  const own = conv.record?.fallback ?? conv.fallback;
+  return own === undefined ? (this.settings?.fallback || '') : own;
+ }
+
+ pick(kind, id) {
+  if (kind === 'global') this.settings?.setFallbackModel(id);
+  else if (this.chat) this.chat.setFallback(id);
+  this.refresh();
+ }
+
+ refresh() {
+  const conv = this.chat?.active;
+  this.root.querySelector('.fallback-chat-head').hidden = !conv;
+  this.root.querySelector('.fallback-chat-hint').hidden = !conv;
+  for (const kind of ['global', 'chat']) {
+   const { now } = this.panes.get(kind);
+   const id = this.shown(kind);
+   const model = id ? this.settings?.find(id) : null;
+   now.textContent = model ? (model.name || model.id) : I18n.t('settings.fallback.none');
+  }
+ }
+}
+
 class GeneralSettings {
- constructor({ root, context }) {
+ constructor({ root, context, chat, settings }) {
   this.root = root;
   this.context = context;
   this.rows = new Map();
@@ -272,6 +431,20 @@ class GeneralSettings {
     <p class="settings-hint tree-note"></p>
     <p class="settings-hint tree-state"></p>
    </section>
+   <section class="general-block general-fallback">
+    <div class="general-head quick-head">
+     <span class="settings-label" id="settings-fallback-label">${t('settings.fallback')}</span>
+     <button type="button" class="lang-button fallback-global-button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="settings-fallback-label settings-fallback-now"><span id="settings-fallback-now">${t('settings.fallback.none')}</span>${ARROW}</button>
+    </div>
+    <p class="settings-hint">${t('settings.fallback.hint')}</p>
+    <div class="general-head quick-head fallback-chat-head">
+     <span class="settings-label" id="settings-fallback-chat-label">${t('settings.fallback.chat')}</span>
+     <button type="button" class="lang-button fallback-chat-button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="settings-fallback-chat-label settings-fallback-chat-now"><span id="settings-fallback-chat-now">${t('settings.fallback.none')}</span>${ARROW}</button>
+    </div>
+    <p class="settings-hint fallback-chat-hint">${t('settings.fallback.chat.hint')}</p>
+    <div class="lang-menu fallback-global-menu" popover role="listbox" aria-labelledby="settings-fallback-label"></div>
+    <div class="lang-menu fallback-chat-menu" popover role="listbox" aria-labelledby="settings-fallback-chat-label"></div>
+   </section>
    <section class="general-block general-access" hidden>
     <div class="general-head">
      <span class="settings-label">${t('settings.access')}</span>
@@ -289,6 +462,9 @@ class GeneralSettings {
   this.awake = new AwakeSettings(root.querySelector('.general-awake'));
   new AutomationSettings(root.querySelector('.general-automation'));
   new TreeSettings(root.querySelector('.general-tree'));
+  // The two fallback choices read the live settings and the live chat each time they are asked, because both change
+  // while this page stays open.
+  this.fallback = new FallbackSettings(root.querySelector('.general-fallback'), settings, chat);
   // A Mac asks the user itself before the app first opens some folders. The block is there only on a Mac.
   this.access = root.querySelector('.general-access');
   root.querySelector('.general-access-open').addEventListener('click', () => window.openghost?.access?.open());

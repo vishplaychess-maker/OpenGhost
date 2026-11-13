@@ -1,7 +1,7 @@
 (() => {
 'use strict';
 
-const STORAGE = { effort: 'deepseek.effort', mode: 'openghost.mode', model: 'openghost.model', catalog: 'openghost.catalog', free: 'openghost.freeOnly' };
+const STORAGE = { effort: 'deepseek.effort', mode: 'openghost.mode', model: 'openghost.model', catalog: 'openghost.catalog', free: 'openghost.freeOnly', fallback: 'openghost.fallbackModel' };
 const KEYS = { openai: 'openai.apiKey', anthropic: 'anthropic.apiKey', deepseek: 'deepseek.apiKey', openrouter: 'openrouter.apiKey', nvidia: 'nvidia.apiKey', gemini: 'gemini.apiKey', venice: 'venice.apiKey', iteracompute: 'iteracompute.apiKey', zro: 'zro.apiKey', infron: 'infron.apiKey', tokenharbor: 'tokenharbor.apiKey', yeta: 'yeta.apiKey', wusrouter: 'wusrouter.apiKey', coarena: 'coarena.apiKey', nararouter: 'nararouter.apiKey', local: 'local.address', custom: 'custom.apiKey' };
 // The order providers appear in, in the settings and in the model picker.
 const ORDER = ['chatgpt', 'openai', 'grok', 'iteracompute', 'zro', 'infron', 'tokenharbor', 'yeta', 'wusrouter', 'coarena', 'nararouter', 'anthropic', 'deepseek', 'openrouter', 'nvidia', 'gemini', 'venice', 'local', 'custom'];
@@ -326,6 +326,9 @@ class Settings {
   this.mode = MODES.includes(mode) ? mode : DEFAULT_MODE;
   // Whether the picker shows only the models that cost nothing. A way of looking, kept between starts.
   this.freeOnly = localStorage.getItem(STORAGE.free) === 'on';
+  // The model another one is answered by when the first is busy or has spent its share. Empty means none: the app
+  // behaves exactly as it did before anyone chose one. A chat may name its own, which comes first.
+  this.fallback = localStorage.getItem(STORAGE.fallback) || '';
   this.checks = {};
   this.checked = new Set();
   // Keys saved in an earlier session count as working until a check says otherwise.
@@ -607,6 +610,16 @@ class Settings {
   localStorage.setItem(STORAGE.model, id);
  }
 
+ // The application-wide fallback. '' is a real choice: it means the safety net is off. A model that is not connected
+ // is not offered, and one that stopped being connected is dropped when the lists are read again.
+ setFallbackModel(id) {
+  const value = id && this.find(id) ? id : '';
+  if (value === this.fallback) return;
+  this.fallback = value;
+  try { localStorage.setItem(STORAGE.fallback, value); } catch {}
+  this.changed();
+ }
+
  // View-only compatibility for controls without a chat. A chat's slider writes through Chat.setEffort.
  setEffort(value) {
   this.effort = value;
@@ -645,6 +658,9 @@ class Settings {
   const mode = localStorage.getItem(STORAGE.mode);
   if (MODES.includes(mode)) this.mode = mode;
   this.freeOnly = localStorage.getItem(STORAGE.free) === 'on';
+  // A fallback named in another window, and one whose model has since been disconnected, both settle here.
+  const chosen = localStorage.getItem(STORAGE.fallback) || '';
+  this.fallback = chosen && this.find(chosen) ? chosen : '';
   this.changed();
   await this.syncAccounts();
  }

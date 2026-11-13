@@ -612,6 +612,12 @@ function authorize(name, args, sender) {
  return Automation.authorize(name, args && typeof args === 'object' ? args : {}, sender?.id);
 }
 
+// One line in the agent's own record, from a renderer that cannot touch the disk. An answer moving to another model
+// writes here (chat.js); nothing about it stops the answer if the folder will not take it.
+function logLine(row) {
+ return AgentDesktop.logLine(row && typeof row === 'object' ? row : {});
+}
+
 function cancel(id) {
  const stop = jobs.get(String(id));
  if (stop) stop();
@@ -668,5 +674,5 @@ async function release(dir) {
  return fs.promises.rmdir(dir).then(() => true, () => false);
 }
 
-module.exports = { runTool, authorize, cancel, cancelAll, environment, guide, release, mark, changed, changes, ports,
+module.exports = { runTool, authorize, logLine, cancel, cancelAll, environment, guide, release, mark, changed, changes, ports,
  get CHATS() { return CHATS; }, setChats, chatsTo };

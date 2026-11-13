@@ -257,16 +257,22 @@ function logDir({ packaged, repo, userData }) {
  return path.join(packaged ? userData : repo, 'agent-logs');
 }
 
-const log = (dir, row) => {
+const log = (dir, row, kind = 'calls') => {
  try {
   fs.mkdirSync(dir, { recursive: true });
   const day = new Date().toISOString().slice(0, 10);
   // What was typed is a person's words: its length and digest go down, not its content.
   const safe = { ...row, at: new Date().toISOString() };
   if (safe.args && typeof safe.args.text === 'string') safe.args = { ...safe.args, text: `${safe.args.text.length} chars ${digest('text', safe.args.text).slice(0, 12)}` };
-  fs.appendFileSync(path.join(dir, `calls-${day}.jsonl`), `${JSON.stringify(safe)}\n`);
+  fs.appendFileSync(path.join(dir, `${kind}-${day}.jsonl`), `${JSON.stringify(safe)}\n`);
  } catch { /* a log that will not write is not a reason to lose the action */ }
 };
+
+// A record of an answer moving to another model, in a file of its own: someone asking why a reply came from a model
+// they did not choose should not have to read every tool call of the day to find it.
+function logLine(row) {
+ log(logDir({ packaged: app.isPackaged, repo: app.getAppPath(), userData: app.getPath('userData') }), row, 'fallback');
+}
 
 // --- finding the program ---------------------------------------------------------------------------------
 
@@ -377,4 +383,4 @@ async function run(name, args, { ticket = '', sender, id = '' } = {}) {
  return { text: shown(body) + note };
 }
 
-module.exports = { NAMES, OBSERVE, ACT, MISSING, LIMIT, TEXT, plan, needsTicket, authorize, consume, retryable, explain, shown, logDir, resolve, status, run };
+module.exports = { NAMES, OBSERVE, ACT, MISSING, LIMIT, TEXT, plan, needsTicket, authorize, consume, retryable, explain, shown, logDir, log, logLine, resolve, status, run };

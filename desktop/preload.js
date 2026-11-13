@@ -188,6 +188,8 @@ contextBridge.exposeInMainWorld('openghost', {
  },
  // Cut, copy, paste or select all, done by the window where its keyboard is (the menu of a right click).
  edit: action => ipcRenderer.invoke('edit:do', action),
+ // A word about what the agent did, kept in the app's own folder: an answer moving to another model writes one line.
+ log: row => ipcRenderer.send('app:log', row),
  tools: {
   run: (id, name, args, cwd, ticket) => ipcRenderer.invoke('tool:run', id, name, args, cwd, ticket),
   authorize: (name, args) => ipcRenderer.invoke('tool:authorize', name, args),
