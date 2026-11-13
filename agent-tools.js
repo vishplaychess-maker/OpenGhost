@@ -11,8 +11,16 @@ const MODES = ['ask', 'auto', 'full'];
 // card in every mode, and the main process runs it only with the one-use ticket that Allow produces (desktop/automation-tool.js).
 const AUTOMATION = new Set(['take_screenshot', 'move_mouse', 'left_click', 'right_click', 'type_text', 'press_key']);
 const AUTOMATION_INPUT = new Set(['move_mouse', 'left_click', 'right_click', 'type_text', 'press_key']);
+// The same computer, read and worked through the operating system's account of it instead of the screen: the
+// accessibility tree, by way of the agent-desktop program. What is looked at needs no permission beyond what reads
+// do; what changes another program needs a ticket, as the mouse and the keyboard do.
+const DESKTOP_OBSERVE = new Set(['desktop_status', 'desktop_apps', 'desktop_windows', 'desktop_snapshot', 'desktop_find', 'desktop_read', 'desktop_scroll']);
+const DESKTOP_ACT = new Set(['desktop_click', 'desktop_type', 'desktop_press', 'desktop_drag', 'desktop_window', 'desktop_launch', 'desktop_close']);
+const DESKTOP = new Set([...DESKTOP_OBSERVE, ...DESKTOP_ACT]);
 const AUTOMATION_KEY = 'openghost.automation';
+const DESKTOP_KEY = 'openghost.desktopUse';
 const automationOn = () => { try { return localStorage.getItem(AUTOMATION_KEY) === 'on'; } catch { return false; } };
+const desktopOn = () => { try { return localStorage.getItem(DESKTOP_KEY) === 'on'; } catch { return false; } };
 
 const bridge = window.openghost?.tools || null;
 
@@ -272,6 +280,81 @@ const SCHEMAS = [
  fn('press_key', 'Press a key or a shortcut on the real keyboard, for example "Enter", "Tab", "Escape", "F5", "Ctrl+C", "Ctrl+Shift+S" or "Alt+Tab". Click or type first when a window needs focus. The user is asked to allow every key press.', {
   key: { type: 'string', description: 'A key or a shortcut joined by +, starting with Ctrl, Shift, Alt or Win' },
  }, ['key']),
+ // The same computer, read the way an assistive technology reads it. What the model must hold on to is said here,
+ // because it is easy to get wrong: an address belongs to one snapshot, and is worth nothing after the screen moves.
+ fn('desktop_status', 'What the accessibility computer-use program can do on this computer: the operating system, whether it has been allowed to read other programs (on macOS a person must grant that in System Settings; on Windows and Linux it usually works at once), and which layers it can see. Call it once before the first snapshot, not before every one.', {}, []),
+ fn('desktop_apps', 'The programs that have a window right now. Use it to get the exact name the other tools want: names are matched the way the operating system spells them.', {
+  app: { type: 'string', description: 'Only programs whose name contains this' },
+ }, []),
+ fn('desktop_windows', 'The open windows and their ids. Two windows of one program is the usual reason to ask: give the id to the other tools to work the right one.', {
+  app: { type: 'string', description: 'Only windows of this program' },
+ }, []),
+ fn('desktop_snapshot', 'Read a program the way the operating system describes it: its buttons, fields, menus and their states, each with an address like @s8f3k2p9:e12 to act on. This is how you look at a desktop app — not a screenshot and not pixels. Read it, act, then read the same place again to see what your action did. Addresses belong to the reading they came from, so after anything changed, read that part again. For a big window start with skeleton or interactive, then go deeper with root.', {
+  app: { type: 'string', description: 'The program to read' },
+  windowId: { type: 'string', description: 'Which window, from desktop_windows' },
+  surface: { type: 'string', description: 'Which layer: window (the usual), menu, sheet, alert, popover, toolbar, taskbar, start-menu and so on' },
+  root: { type: 'string', description: 'An address from an earlier reading, to read only that part of the tree' },
+  maxDepth: { type: 'integer', description: 'How deep to go, 1 to 20' },
+  interactive: { type: 'boolean', description: 'Only the parts a person can act on — the usual first reading' },
+  compact: { type: 'boolean', description: 'Fold away containers that have one nameless child' },
+  skeleton: { type: 'boolean', description: 'A shallow map that says how many children each cut branch holds' },
+ }, []),
+ fn('desktop_find', 'The short way to one control when you know what it is called or what kind it is: it answers with the addresses to act on. Use it instead of reading a whole window.', {
+  app: { type: 'string', description: 'The program to search' },
+  role: { type: 'string', description: 'What kind of element: button, textfield, checkbox, menu item ...' },
+  name: { type: 'string', description: 'The name or label it carries' },
+  text: { type: 'string', description: 'Words somewhere inside it' },
+ }, []),
+ fn('desktop_read', 'One thing about one element: its text, value, title, bounds, role or states — or, with kind set to state, whether it is visible, enabled, checked, focused, expanded or selected. After an action you are not sure landed, this is how you know.', {
+  ref: { type: 'string', description: 'An address from a reading, as @s8f3k2p9:e12' },
+  kind: { type: 'string', description: 'state to ask whether it is visible, enabled, checked ...; left out, it reads a property' },
+  property: { type: 'string', description: 'text, value, title, bounds, role, states — or visible, enabled, checked, focused, expanded, selected for a state' },
+ }, ['ref']),
+ fn('desktop_scroll', 'Scroll a list, a page or a panel by its address, a few units at a time. Nothing is clicked and no window is taken: it is the one action that only moves what is shown.', {
+  ref: { type: 'string', description: 'An address from a reading' },
+  direction: { type: 'string', description: 'up, down, left or right; down by default' },
+  amount: { type: 'integer', description: 'How many units, 1 to 50; 3 by default' },
+ }, ['ref']),
+ fn('desktop_click', 'Press a control by its address, the way an assistive technology presses it: no pointer moves and no window is taken. The user is asked to allow every click. A double click is another thing — the program can only do it physically, so it moves the real pointer and takes the window; use it only when one press will not do.', {
+  ref: { type: 'string', description: 'An address from a reading of the same program' },
+  action: { type: 'string', description: 'press (the usual), right for a context menu, or double' },
+  description: PURPOSE('action'),
+ }, ['ref']),
+ fn('desktop_type', 'Put text into a field by its address. The user sees the words before they go, so write them out as they should stand. Keep passwords, tokens and other secrets out of it unless the person asked you to enter them.', {
+  ref: { type: 'string', description: 'The field, as an address from a reading' },
+  text: { type: 'string', description: 'The exact text to put in' },
+  description: PURPOSE('text'),
+ }, ['ref', 'text']),
+ fn('desktop_press', 'Send a key or a shortcut — "return", "escape", "tab", "ctrl+s", "alt+tab" — to a program without moving the pointer. Prefer pressing a button by its address: a key goes to whatever has focus and may not be the window you meant. The user is asked to allow every key.', {
+  combo: { type: 'string', description: 'Keys joined by +, starting with a modifier: ctrl+s, shift+tab, return' },
+  app: { type: 'string', description: 'The program to send it to' },
+  windowId: { type: 'string', description: 'Which window, when several share one name' },
+  description: PURPOSE('keys'),
+ }, ['combo']),
+ fn('desktop_drag', 'Drag one element onto another, by their addresses. The program can only do this with physical input: it takes the window and moves the real pointer. Use it where no semantic path exists — a sortable list, a canvas, a resize handle — and never as a way to click a button.', {
+  from: { type: 'string', description: 'The element to take hold of' },
+  to: { type: 'string', description: 'The element to put it on' },
+  description: PURPOSE('action'),
+ }, ['from', 'to']),
+ fn('desktop_window', 'Bring a window to the front, minimize, maximize, restore, resize or move it. Bringing one to the front takes the foreground from whatever the person is doing, so say what you need it for.', {
+  action: { type: 'string', description: 'focus, minimize, maximize, restore, resize or move' },
+  app: { type: 'string', description: 'The program whose window' },
+  windowId: { type: 'string', description: 'Which window, from desktop_windows' },
+  width: { type: 'integer', description: 'For resize: the new width in pixels' },
+  height: { type: 'integer', description: 'For resize: the new height in pixels' },
+  x: { type: 'integer', description: 'For move: the new left edge' },
+  y: { type: 'integer', description: 'For move: the new top edge' },
+  description: PURPOSE('window'),
+ }, ['action']),
+ fn('desktop_launch', 'Start a program by name and wait until it is running. Nothing is typed into it, and no window is taken, until the user allows those.', {
+  app: { type: 'string', description: 'The program to start, as its own name spells it' },
+  description: PURPOSE('app'),
+ }, ['app']),
+ fn('desktop_close', 'Quit a program the way its own quit works, so it can save and say if it cannot. force true ends it at once instead, which loses whatever it had not written: only when the person asked for that.', {
+  app: { type: 'string', description: 'The program to quit' },
+  force: { type: 'boolean', description: 'End it at once rather than quit it' },
+  description: PURPOSE('app'),
+ }, ['app']),
 ];
 
 const BROWSER_FREE = new Set(['browser_snapshot', 'browser_screenshot', 'browser_read', 'browser_wait', 'browser_scroll']);
@@ -799,9 +882,13 @@ const pictureList = args => (Array.isArray(args?.pictures) ? args.pictures : [])
 function needsApproval(name, args, { mode, cwd, attached = [], apart = null, panel = null }) {
  // What clicks and types on the computer is always the user's decision: no mode makes it silent.
  if (AUTOMATION_INPUT.has(name)) return true;
+ // The same rule for the accessibility tree: what changes another program is asked, in every mode. Reading a program
+ // is asked about where reads are, and goes free in auto and full.
+ if (DESKTOP_ACT.has(name)) return true;
  if (mode === 'full') return false;
  const ask = mode !== 'auto';
  if (name.startsWith('browser_')) return browserApproval(name, args, ask, apart, cwd, panel);
+ if (DESKTOP_OBSERVE.has(name)) return ask;
  const videos = Array.isArray(attached) ? attached : attached.videos || [], pdfs = Array.isArray(attached) ? [] : attached.pdfs || [];
  switch (name) {
   case 'read_file':
@@ -938,6 +1025,23 @@ function describe(name, args, cwd, apart = null, panel = null) {
    return { kind: 'screen', title: I18n.t('approve.typeText'), effect: 'input', badge: true, places: [], quote: text.length > 120 ? `“${text.slice(0, 120)}…”` : `“${text}”` };
   }
   case 'press_key': return { kind: 'screen', title: I18n.t('approve.pressKey'), effect: 'input', badge: true, places: [], quote: String(args.key || '') };
+  // The tree tools name what they touch in the room a card has: the program, the address, the words. The address is
+  // shown as it was given, because it is what the user may want to look at on their own screen.
+  case 'desktop_status': return { kind: 'screen', title: I18n.t('approve.desktopStatus'), effect: 'read', badge: true, places: [] };
+  case 'desktop_apps': case 'desktop_windows': case 'desktop_snapshot': case 'desktop_find': case 'desktop_read':
+   return { kind: 'screen', title: purpose || I18n.t('approve.desktopRead'), effect: 'read', badge: true, places: [], quote: String(args.app || args.role || args.name || args.root || args.ref || '') };
+  case 'desktop_scroll': return { kind: 'screen', title: purpose || I18n.t('approve.desktopScroll'), effect: 'input', badge: true, places: [], quote: `${String(args.direction || 'down')} ${String(args.amount || 3)} ${String(args.ref || '')}` };
+  case 'desktop_click': return { kind: 'screen', title: purpose || I18n.t('approve.desktopClick'), effect: 'input', badge: true, places: [], quote: `${String(args.action || 'press')} ${String(args.ref || '')}` };
+  case 'desktop_type': {
+   // The card shows what will be typed, so the words themselves are what is allowed; a long text is cut short there.
+   const text = String(args.text ?? '').replace(/\s+/g, ' ').trim();
+   return { kind: 'screen', title: purpose || I18n.t('approve.desktopType'), effect: 'input', badge: true, places: [], quote: text.length > 120 ? `“${text.slice(0, 120)}…”` : `“${text}”` };
+  }
+  case 'desktop_press': return { kind: 'screen', title: purpose || I18n.t('approve.desktopPress'), effect: 'input', badge: true, places: [], quote: `${String(args.combo || '')}${args.app ? ` → ${args.app}` : ''}` };
+  case 'desktop_drag': return { kind: 'screen', title: purpose || I18n.t('approve.desktopDrag'), effect: 'input', badge: true, places: [], quote: `${String(args.from || '')} → ${String(args.to || '')}` };
+  case 'desktop_window': return { kind: 'screen', title: purpose || I18n.t('approve.desktopWindow'), effect: 'input', badge: true, places: [], quote: `${String(args.action || '')} ${String(args.app || args.windowId || '')}` };
+  case 'desktop_launch': return { kind: 'screen', title: purpose || I18n.t('approve.desktopLaunch'), effect: 'input', badge: true, places: [], quote: String(args.app || '') };
+  case 'desktop_close': return { kind: 'screen', title: purpose || I18n.t('approve.desktopClose'), effect: 'input', badge: true, places: [], quote: `${String(args.app || '')}${args.force === true ? ' (terminate)' : ''}` };
   default: return { kind: 'command', title: name, effect: 'run', places: [], code: JSON.stringify(args), reveal: 'command' };
  }
 }
@@ -1178,7 +1282,9 @@ function format(name, args, result) {
   case 'right_click': return 'Right-clicked where the pointer is.';
   case 'type_text': return `Typed ${result.chars} characters into the focused app.`;
   case 'press_key': return `Pressed ${result.key}.`;
-  default: return JSON.stringify(result);
+  // What the tree tools answer with is already the program's own words, cut to what the model can hold: it goes
+  // across as it is, not wrapped in another layer of JSON.
+  default: if (DESKTOP.has(name)) return result?.text || '(the program answered with nothing)'; return JSON.stringify(result);
  }
 }
 
@@ -1234,19 +1340,21 @@ let env = null;
  window.AgentTools = {
  runs,
  available: !!bridge,
- // The quick chat's window has no built-in browser, so its agent is given no tools for one. Desktop automation is
- // offered only once the user has turned it on in Settings → General, and never in the quick chat.
+ // The quick chat's window has no built-in browser, so its agent is given no tools for one. Desktop automation, and
+ // reading and working other programs through the accessibility tree, are offered only once the user has turned each
+ // of them on in Settings → General, and never in the quick chat.
  get schemas() {
-  const quick = !!window.openghost?.quick, on = automationOn();
+  const quick = !!window.openghost?.quick, on = automationOn(), tree = desktopOn();
   return SCHEMAS.filter(tool => {
    const name = tool.function.name;
+   if (DESKTOP.has(name)) return tree && !quick;
    if (!AUTOMATION.has(name)) return !(quick && name.startsWith('browser_'));
    return on && !quick;
   });
  },
  modes: MODES,
  needsApproval,
- needsTicket: name => AUTOMATION_INPUT.has(name),
+ needsTicket: name => AUTOMATION_INPUT.has(name) || DESKTOP_ACT.has(name),
  approvalRule,
  describe,
  inside,
@@ -1277,10 +1385,11 @@ let env = null;
  async run(name, args, { id, cwd, apart = null, ticket = '', panel = null }) {
   if (!bridge) return 'Error: tools are only available in the desktop app';
   if (AUTOMATION.has(name) && !automationOn()) return 'Error: Desktop automation is turned off in Settings → General.';
+  if (DESKTOP.has(name) && !desktopOn()) return 'Error: Accessibility computer use is turned off in Settings → General.';
   if (name.startsWith('browser_')) return browser(name, args, id, cwd, apart, panel);
   if (name === 'web_search') return search(args.query, id, cwd);
   if (name === 'find_media') return media(args, id, cwd);
-  const result = await bridge.run(id, name, args, cwd, AUTOMATION_INPUT.has(name) ? ticket : undefined);
+  const result = await bridge.run(id, name, args, cwd, AUTOMATION_INPUT.has(name) || DESKTOP_ACT.has(name) ? ticket : undefined);
   return name === 'fetch_url' ? page(result, args.start) : format(name, args, result);
  },
  // The permission for one input action, asked for only after the user has allowed it on its card (chat.js).

@@ -9,6 +9,7 @@ const Media = require('./media');
 const Pdf = require('./pdf');
 const Browser = require('./browser');
 const Automation = require('./automation-tool');
+const AgentDesktop = require('./agent-desktop');
 
 const OUTPUT = { head: 12000, tail: 18000 };
 const TIMEOUT = { shell: 120, max: 900, git: 120, fetch: 30, probe: 10 };
@@ -584,6 +585,15 @@ async function runTool(id, name, args, cwd, sender, ticket) {
   }
  }
  const browser = name.startsWith('browser_'), tool = TOOLS[name], params = args && typeof args === 'object' ? args : {};
+ // The accessibility tree of another program, through the agent-desktop program. The same rule as the mouse: what
+ // changes the computer does not happen without its ticket. It belongs to no project folder either.
+ if (AgentDesktop.NAMES.has(name)) {
+  try {
+   return await AgentDesktop.run(name, params, { ticket: String(ticket || ''), sender: sender?.id, id: String(id || '') });
+  } catch (error) {
+   return { error: explain(error) };
+  }
+ }
  if (!browser && !tool) return { error: `Unknown tool ${name}` };
  const files = name === 'browser_upload' || (name === 'browser_screenshot' && params.save_to !== undefined);
  try {
@@ -597,6 +607,7 @@ async function runTool(id, name, args, cwd, sender, ticket) {
 
 // Called from the renderer only after the user has allowed this exact action on its card (chat.js).
 function authorize(name, args, sender) {
+ if (AgentDesktop.NAMES.has(name)) return AgentDesktop.authorize(name, args && typeof args === 'object' ? args : {}, sender?.id);
  if (!Automation.NAMES.has(name)) return { error: `Unknown tool ${name}` };
  return Automation.authorize(name, args && typeof args === 'object' ? args : {}, sender?.id);
 }
@@ -611,11 +622,14 @@ function cancelAll() {
 }
 
 async function environment() {
- const [found, gitVersion] = await Promise.all([detectShell(), detectGit()]);
+ const [found, gitVersion, desktop] = await Promise.all([detectShell(), detectGit(), AgentDesktop.resolve().catch(() => null)]);
  return {
   os: `${SYSTEM.os} ${os.release()}`,
   shell: `${found.name} ${found.version}`,
   git: gitVersion,
+  // Whether the accessibility computer-use program is on this computer at all, and which version answers. Empty
+  // means it is not there, and the tools say what installs it rather than pretending to work.
+  agentDesktop: desktop?.version || '',
   home: os.homedir(),
   user: os.userInfo().username,
   // Where the user's own folders really are: Windows may keep them in OneDrive, under names in its language.

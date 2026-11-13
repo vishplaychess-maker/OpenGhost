@@ -4,3 +4,4 @@ dist-*/
 .cache/
 .og-build-cache/
 .openghost-data/
+agent-logs/

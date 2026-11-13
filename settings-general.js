@@ -158,6 +158,48 @@ class AutomationSettings {
  }
 }
 
+// Whether the agent may read and work other programs through the operating system's account of them — the
+// accessibility tree, by way of the agent-desktop program. Off until the user turns it on, and turning it on only
+// offers the tools: every click, keystroke, drag, window and quit still asks on a card of its own, in every mode.
+// The program is not carried inside the app, because its per-platform binaries are some 30 MB: it is looked for where
+// a person who installed it would have it, and when it is not there the one line that puts it there is said.
+const DESKTOP_KEY = 'openghost.desktopUse';
+
+class TreeSettings {
+ constructor(root) {
+  this.root = root;
+  this.toggle = root.querySelector('.tree-switch');
+  this.line = root.querySelector('.tree-state');
+  this.found = null;
+  if (!window.openghost?.tools?.authorize) { root.hidden = true; return; }
+  root.querySelector('.tree-note').textContent = I18n.t(`settings.tree.note.${window.openghost.platform === 'darwin' ? 'mac' : window.openghost.platform === 'win32' ? 'windows' : 'linux'}`);
+  this.toggle.addEventListener('click', () => this.set(!this.on));
+  this.paint();
+  // The answer comes from the same reading of the computer that the agent is given, so the words here and the words
+  // a refused tool gives cannot disagree.
+  window.AgentTools?.environment().then(env => { this.found = env?.agentDesktop || ''; this.paint(); }, () => { this.found = ''; this.paint(); });
+ }
+
+ get on() {
+  try { return localStorage.getItem(DESKTOP_KEY) === 'on'; } catch { return false; }
+ }
+
+ set(on) {
+  try { localStorage.setItem(DESKTOP_KEY, on ? 'on' : 'off'); } catch {}
+  this.paint();
+ }
+
+ paint() {
+  this.root.classList.toggle('is-off', !this.on);
+  this.toggle.setAttribute('aria-checked', String(this.on));
+  if (!this.line) return;
+  // Nothing said until the search has answered: a blank line is truer than a guess about another program.
+  if (this.found === null) { this.line.textContent = ''; return; }
+  this.line.textContent = this.found ? I18n.t('settings.tree.found', { version: this.found }) : I18n.t('settings.tree.missing');
+  this.root.classList.toggle('is-missing', !this.found);
+ }
+}
+
 class GeneralSettings {
  constructor({ root, context }) {
   this.root = root;
@@ -221,6 +263,15 @@ class GeneralSettings {
     <p class="settings-hint">${t('settings.automation.hint')}</p>
     <p class="settings-hint automation-note"></p>
    </section>
+   <section class="general-block general-tree">
+    <div class="general-head quick-head">
+     <span class="settings-label" id="settings-tree-label">${t('settings.tree')}</span>
+     <button type="button" class="memory-switch tree-switch" role="switch" aria-labelledby="settings-tree-label"><span class="memory-switch-knob"></span></button>
+    </div>
+    <p class="settings-hint">${t('settings.tree.hint')}</p>
+    <p class="settings-hint tree-note"></p>
+    <p class="settings-hint tree-state"></p>
+   </section>
    <section class="general-block general-access" hidden>
     <div class="general-head">
      <span class="settings-label">${t('settings.access')}</span>
@@ -237,6 +288,7 @@ class GeneralSettings {
   this.quick = new QuickSettings(root.querySelector('.general-quick'));
   this.awake = new AwakeSettings(root.querySelector('.general-awake'));
   new AutomationSettings(root.querySelector('.general-automation'));
+  new TreeSettings(root.querySelector('.general-tree'));
   // A Mac asks the user itself before the app first opens some folders. The block is there only on a Mac.
   this.access = root.querySelector('.general-access');
   root.querySelector('.general-access-open').addEventListener('click', () => window.openghost?.access?.open());
