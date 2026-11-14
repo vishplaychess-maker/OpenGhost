@@ -331,9 +331,8 @@ class Settings {
   this.profiles = new ModelProfiles();
   this.profile = 'default';
   this.profileEffort = '';
-  // The model another one is answered by when the first is busy or has spent its share. Empty means none: the app
-  // behaves exactly as it did before anyone chose one. A chat may name its own, which comes first.
-  this.fallback = localStorage.getItem(STORAGE.fallback) || '';
+  // The active profile's fallbacks, in its order: the models that may answer when the chat's own cannot.
+  this.fallbacks = [];
   this.checks = {};
   this.checked = new Set();
   // Keys saved in an earlier session count as working until a check says otherwise.
@@ -363,7 +362,8 @@ class Settings {
  // the same bridge. Until it arrives the window keeps the model it had, which is what an install from before profiles
  // means anyway.
  loadProfiles() {
-  const seed = { model: this.model, reasoning: this.legacyEffort, fallback: this.fallback };
+  // An install from before profiles may have named one fallback; it becomes the first entry of the default's list.
+  const seed = { model: this.model, reasoning: this.legacyEffort, fallback: localStorage.getItem(STORAGE.fallback) || '' };
   return this.profiles.load(seed).then(() => this.applyProfile()).catch(() => {});
  }
 
@@ -374,6 +374,7 @@ class Settings {
   if (!profile) return;
   this.profile = profile.id;
   this.profileEffort = typeof profile.reasoning === 'string' ? profile.reasoning : '';
+  this.fallbacks = Array.isArray(profile.fallbacks) ? profile.fallbacks.map(item => ({ ...item })) : [];
   if (profile.model) this.model = profile.model;
   this.changed();
  }
@@ -679,16 +680,6 @@ class Settings {
   localStorage.setItem(STORAGE.model, id);
  }
 
- // The application-wide fallback. '' is a real choice: it means the safety net is off. A model that is not connected
- // is not offered, and one that stopped being connected is dropped when the lists are read again.
- setFallbackModel(id) {
-  const value = id && this.find(id) ? id : '';
-  if (value === this.fallback) return;
-  this.fallback = value;
-  try { localStorage.setItem(STORAGE.fallback, value); } catch {}
-  this.changed();
- }
-
  // View-only compatibility for controls without a chat. A chat's slider writes through Chat.setEffort.
  setEffort(value) {
   this.effort = value;
@@ -727,11 +718,8 @@ class Settings {
   const mode = localStorage.getItem(STORAGE.mode);
   if (MODES.includes(mode)) this.mode = mode;
   this.freeOnly = localStorage.getItem(STORAGE.free) === 'on';
-  // A fallback named in another window, and one whose model has since been disconnected, both settle here.
-  const chosen = localStorage.getItem(STORAGE.fallback) || '';
-  this.fallback = chosen && this.find(chosen) ? chosen : '';
-  // The profiles are read again too: another window may have switched or edited one. Only a file that was read before
-  // is asked for again — a first read is the migration's, and that happens once.
+  // The profiles are read again too: another window may have switched or edited one, and a profile carries the
+  // fallbacks in its order. Only a file that was read before is asked for again — a first read is the migration's.
   if (this.profiles.data) await this.profiles.load({}).then(() => this.applyProfile()).catch(() => {});
   this.changed();
   await this.syncAccounts();

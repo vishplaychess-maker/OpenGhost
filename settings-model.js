@@ -12,6 +12,8 @@ const TICK = (() => {
  box.innerHTML = CHECK;
  return box.firstElementChild;
 })();
+// The grip of a fallback row: two columns of dots, which is what a list that can be dragged is marked with.
+const GRIP = '<svg viewBox="0 0 10 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="3.5" r="1.3"/><circle cx="7" cy="3.5" r="1.3"/><circle cx="3" cy="8" r="1.3"/><circle cx="7" cy="8" r="1.3"/><circle cx="3" cy="12.5" r="1.3"/><circle cx="7" cy="12.5" r="1.3"/></svg>';
 // The same three fields on every list, so one watch covers them all.
 const watched = new WeakSet();
 
@@ -22,6 +24,11 @@ class ModelSettings {
   this.draft = null;
   this.panes = new Map();
   this.root.innerHTML = `
+   <nav class="model-subnav" role="tablist" aria-label="${I18n.t('settings.modelSection')}">
+    <button type="button" class="model-subtab is-current" role="tab" aria-selected="true" data-pane="main">${I18n.t('settings.model.main')}</button>
+    <button type="button" class="model-subtab" role="tab" aria-selected="false" data-pane="fallback">${I18n.t('settings.model.fallbacks')}</button>
+   </nav>
+   <div class="model-pane" data-pane="main">
    <section class="general-block model-profiles-block">
     <div class="general-head">
      <span class="settings-label" id="settings-model-profiles-label">${I18n.t('settings.model.profiles')}</span>
@@ -49,9 +56,70 @@ class ModelSettings {
     <div class="lang-menu model-provider-menu" popover role="listbox" aria-label="${I18n.t('settings.model.provider')}"></div>
     <div class="lang-menu model-model-menu" popover role="listbox" aria-label="${I18n.t('settings.model.model')}"></div>
     <div class="lang-menu model-reasoning-menu" popover role="listbox" aria-label="${I18n.t('settings.model.reasoning')}"></div>
-   </section>`;
+   </section>
+   </div>
+   <div class="model-pane" data-pane="fallback" hidden>
+    <section class="general-block model-fallback-block">
+     <div class="general-head">
+      <span class="settings-label" id="settings-model-fallback-label">${I18n.t('settings.model.fallbacks')}</span>
+      <button type="button" class="settings-button model-fallback-add">${I18n.t('settings.model.fallback.add')}</button>
+     </div>
+     <p class="settings-hint">${I18n.t('settings.model.fallbacks.hint')}</p>
+     <ol class="model-fallback-list" aria-labelledby="settings-model-fallback-label"></ol>
+     <p class="settings-hint model-fallback-empty">${I18n.t('settings.model.fallbacks.empty')}</p>
+     <div class="lang-menu model-fallback-menu" popover role="listbox" aria-label="${I18n.t('settings.model.fallback.add')}"></div>
+    </section>
+   </div>`;
   this.list = this.root.querySelector('.model-profile-list');
   this.status = this.root.querySelector('.model-status');
+  this.fallbackList = this.root.querySelector('.model-fallback-list');
+  this.fallbackEmpty = this.root.querySelector('.model-fallback-empty');
+  this.fallbackMenu = this.root.querySelector('.model-fallback-menu');
+  this.root.querySelectorAll('.model-subtab').forEach(button => button.addEventListener('click', () => this.showPane(button.dataset.pane)));
+  this.root.querySelector('.model-fallback-add').addEventListener('click', () => this.openFallbackMenu());
+  this.fallbackMenu.addEventListener('click', event => {
+   const option = event.target.closest('.lang-option');
+   if (!option) return;
+   this.fallbackMenu.hidePopover();
+   if (option.dataset.value) this.addFallback(option.dataset.value);
+  });
+  this.fallbackList.addEventListener('click', event => {
+   const remove = event.target.closest('.model-fallback-remove');
+   if (remove) this.removeFallback(Number(remove.dataset.at));
+  });
+  this.fallbackList.addEventListener('keydown', event => {
+   const row = event.target.closest('.model-fallback-row');
+   if (!row || !['ArrowUp', 'ArrowDown'].includes(event.key) || !event.altKey) return;
+   event.preventDefault();
+   this.moveFallback(Number(row.dataset.at), event.key === 'ArrowUp' ? -1 : 1);
+  });
+  this.fallbackList.addEventListener('dragstart', event => {
+   const row = event.target.closest('.model-fallback-row');
+   if (!row) return;
+   this.dragged = Number(row.dataset.at);
+   row.classList.add('is-dragging');
+   event.dataTransfer.effectAllowed = 'move';
+   // Firefox needs some payload before a drag starts at all; Chromium does not read it back here.
+   event.dataTransfer.setData('text/plain', row.dataset.at);
+  });
+  this.fallbackList.addEventListener('dragend', () => {
+   this.dragged = null;
+   for (const row of this.fallbackList.querySelectorAll('.is-dragging, .is-over')) row.classList.remove('is-dragging', 'is-over');
+  });
+  this.fallbackList.addEventListener('dragover', event => {
+   const row = event.target.closest('.model-fallback-row');
+   if (!row || this.dragged === null) return;
+   event.preventDefault();
+   event.dataTransfer.dropEffect = 'move';
+   for (const other of this.fallbackList.querySelectorAll('.is-over')) if (other !== row) other.classList.remove('is-over');
+   row.classList.add('is-over');
+  });
+  this.fallbackList.addEventListener('drop', event => {
+   const row = event.target.closest('.model-fallback-row');
+   if (!row || this.dragged === null) return;
+   event.preventDefault();
+   this.moveFallback(this.dragged, Number(row.dataset.at) - this.dragged);
+  });
   this.nameForm = this.root.querySelector('.model-profile-name');
   this.nameInput = this.root.querySelector('.model-profile-input');
   this.nameForm.addEventListener('submit', event => {
@@ -165,6 +233,7 @@ class ModelSettings {
    this.dirty = false;
   }
   this.showChoice();
+  this.drawFallbacks();
   this.paintName(profile);
  }
 
@@ -297,6 +366,98 @@ class ModelSettings {
   if (this.profile?.id === 'default') return;
   await this.settings.removeProfile();
   this.draft = null;
+  this.sync();
+ }
+
+ // The two panes of the section: what a new chat is answered by, and the models that stand behind it.
+ showPane(name) {
+  for (const button of this.root.querySelectorAll('.model-subtab')) {
+   const on = button.dataset.pane === name;
+   button.classList.toggle('is-current', on);
+   button.setAttribute('aria-selected', String(on));
+  }
+  for (const pane of this.root.querySelectorAll('.model-pane')) pane.hidden = pane.dataset.pane !== name;
+ }
+
+ // The profile's fallbacks as they stand, in its order. Every change here is written at once: an order is a choice,
+ // and a list that only took effect on Apply would be a second place to remember to press.
+ fallbacks() { return (this.profile?.fallbacks || []).map(item => ({ provider: item.provider || '', model: item.model })); }
+
+ drawFallbacks() {
+  const list = this.fallbacks();
+  this.fallbackEmpty.hidden = list.length > 0;
+  this.fallbackList.replaceChildren(...list.map((item, at) => {
+   const model = this.settings.find(item.model);
+   const row = document.createElement('li');
+   row.className = 'model-fallback-row';
+   row.dataset.at = String(at);
+   row.draggable = true;
+   row.tabIndex = 0;
+   const grip = document.createElement('span');
+   grip.className = 'model-fallback-grip';
+   grip.setAttribute('aria-hidden', 'true');
+   grip.innerHTML = GRIP;
+   const name = document.createElement('span');
+   name.className = 'lang-name';
+   name.textContent = model?.name || item.model;
+   const note = document.createElement('span');
+   note.className = 'lang-note';
+   note.textContent = window.Providers?.NAMES?.[item.provider || model?.provider || ''] || item.provider || '';
+   const remove = document.createElement('button');
+   remove.type = 'button';
+   remove.className = 'model-fallback-remove';
+   remove.dataset.at = String(at);
+   remove.setAttribute('aria-label', I18n.t('settings.model.fallback.remove', { name: name.textContent }));
+   remove.textContent = '×';
+   row.append(grip, name, note, remove);
+   return row;
+  }));
+ }
+
+ // Adding asks the same list the picker does, with the models already standing behind this profile left out.
+ openFallbackMenu() {
+  const list = this.fallbacks(), taken = new Set(list.map(item => item.model));
+  const rows = (this.settings.models || []).filter(model => !taken.has(model.id)).map(model => {
+   const button = this.option(model.id, model.name || model.id, window.Providers?.NAMES?.[model.provider] || model.provider, false);
+   return button;
+  });
+  this.fallbackMenu.replaceChildren(...rows);
+  this.fallbackMenu.showPopover();
+  const at = this.root.querySelector('.model-fallback-add').getBoundingClientRect();
+  const box = this.root.closest('.settings-page')?.getBoundingClientRect() || { left: 0, right: innerWidth, top: 0, bottom: innerHeight };
+  const left = Math.min(box.right - 10 - this.fallbackMenu.offsetWidth, Math.max(box.left + 10, at.right - this.fallbackMenu.offsetWidth));
+  const top = Math.min(box.bottom - 10 - this.fallbackMenu.offsetHeight, at.bottom + 6);
+  this.fallbackMenu.style.left = `${left}px`;
+  this.fallbackMenu.style.top = `${top}px`;
+  this.fallbackMenu.querySelector('.lang-option')?.focus({ preventScroll: true });
+ }
+
+ async addFallback(id) {
+  const model = this.settings.find(id);
+  if (!model) return;
+  const list = this.fallbacks();
+  if (list.some(item => item.model === id)) return;
+  await this.commitFallbacks([...list, { provider: model.provider, model: id }]);
+ }
+
+ async removeFallback(at) {
+  const list = this.fallbacks();
+  if (!Number.isInteger(at) || at < 0 || at >= list.length) return;
+  list.splice(at, 1);
+  await this.commitFallbacks(list);
+ }
+
+ async moveFallback(from, by) {
+  const list = this.fallbacks();
+  const to = Math.min(list.length - 1, Math.max(0, from + by));
+  if (from === to || !list[from]) return;
+  const [moved] = list.splice(from, 1);
+  list.splice(to, 0, moved);
+  await this.commitFallbacks(list);
+ }
+
+ async commitFallbacks(list) {
+  await this.settings.saveProfile({ fallbacks: list });
   this.sync();
  }
 

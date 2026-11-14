@@ -16,7 +16,7 @@ const QUOTA = ['insufficient_quota', 'billing_error', 'credit_balance_exhausted'
 // What each attempt answers with. `fail` as an object means the first model fails that way and the second answers;
 // as a function of (attempt, model) it decides for itself. A spec with a status is an HTTP failure, one with an
 // error is a stream that ends that way, and a prefix is text that reached the screen before it did.
-function harness(fail, { fallback = other, waitsReal = false, manual = false } = {}) {
+function harness(fail, { fallbacks = [other], waitsReal = false, manual = false } = {}) {
  let posts = 0, next = 0;
  const decide = typeof fail === 'function' ? fail : (n, model) => model === 'first-model' ? fail : null;
  const bodies = [], waits = [], moved = [], timers = new Map();
@@ -24,7 +24,7 @@ function harness(fail, { fallback = other, waitsReal = false, manual = false } =
   const asked = JSON.parse(init.body);
   posts++; bodies.push(asked);
   const way = decide(posts, asked.model);
-  if (!way) return { ok: true, body: (async function* () { yield Buffer.from(eventText(packets(asked.model === 'first-model' ? 'FIRST' : 'SECOND'))); })() };
+  if (!way) return { ok: true, body: (async function* () { yield Buffer.from(eventText(packets(asked.model === 'first-model' ? 'FIRST' : asked.model === 'third-model' ? 'THIRD' : 'SECOND'))); })() };
   if (typeof way === 'number') return { ok: false, status: way, json: async () => ({ error: { code: 'server_error', message: 'The server is unable to answer' } }) };
   // Words that reached the screen before the failure: the answer began, and nothing may be said again elsewhere.
   if (way.prefix) return { ok: true, body: (async function* () { yield Buffer.from(eventText([...way.prefix, { type: 'response.failed', response: { error: way } }])); })() };
@@ -47,7 +47,7 @@ function harness(fail, { fallback = other, waitsReal = false, manual = false } =
   clearTimeout: id => waitsReal ? clearTimeout(id) : timers.delete(id),
  };
  vm.createContext(c); vm.runInContext(read('providers.js'), c);
- const ask = (over = {}) => c.window.Providers.stream(config, { ...request, fallback, onFallback: row => moved.push(row), ...over });
+ const ask = (over = {}) => c.window.Providers.stream(config, { ...request, fallbacks, onFallback: row => moved.push(row), ...over });
  return { api: c.window.Providers, ask, bodies, waits, timers, moved, get posts() { return posts; } };
 }
 async function rejected(work) { try { await work; return null; } catch (error) { return error; } }
@@ -113,13 +113,27 @@ async function main() {
  const begun = harness({ status: 429, code: 'rate_limit_exceeded', message: 'Too many requests', prefix: [{ type: 'response.output_text.delta', item_id: 'm', delta: 'HALF' }] });
  const partial = await rejected(begun.ask());
  check('A stream that already said words is not sent to another model', partial?.partial?.content === 'HALF' && begun.posts === 1 && begun.moved.length === 0);
- // One attempt at the other model, and no ladder behind it.
+ // One attempt at each model in the list, in order, and nothing behind them.
  const both = harness(n => n <= 2 ? { status: 429, code: 'rate_limit_exceeded', message: 'Too many requests' } : 503);
  const failed = await rejected(both.ask());
- check('When the fallback fails too its own error is what is said, once', !!failed && both.posts === 3 && both.moved.length === 1 && both.waits.length === 1);
+ check('When every model in the list fails its last error is what is said, with no line', !!failed && both.posts === 3 && both.moved.length === 0 && both.waits.length === 1 && failed.status === 503);
+ // The list in its order: the first that answers is the one the chat goes on with.
+ const third = { ...other, id: 'third', model: 'third-model' };
+ const ordered = harness((n, model) => model === 'second-model' ? 503 : model === 'third-model' ? null : { status: 429, code: 'rate_limit_exceeded', message: 'Too many requests' }, { fallbacks: [other, third] });
+ const walked = await ordered.ask();
+ check('Each model is tried in the order it was put in', walked.content === 'THIRD' && ordered.bodies.map(b => b.model).join() === 'first-model,first-model,second-model,third-model');
+ check('The switch that is announced is the model that answered', ordered.moved.length === 1 && ordered.moved[0].to.id === 'third' && ordered.moved[0].reason === 'rate');
+ // A quota moves through the list without the wait the busy door gets.
+ const quick = harness((n, model) => model === 'first-model' ? { status: 429, code: 'insufficient_quota', message: 'Out' } : 503, { fallbacks: [other, third] });
+ const hurried = await quick.ask().catch(() => null);
+ check('A spent quota walks the list at once and stops at the last failure', quick.waits.length === 0 && quick.posts === 3 && hurried === null);
+ // A model listed twice, or the one already being asked, is asked once at most.
+ const twice = harness((n, model) => model === 'first-model' ? { status: 429, code: 'rate_limit_exceeded', message: 'Too many requests' } : null, { fallbacks: [other, other, config] });
+ const once = await twice.ask();
+ check('A repeated entry and the model already being asked are not tried again', once.content === 'SECOND' && twice.bodies.filter(b => b.model === 'second-model').length === 1);
  // Without a named fallback nothing about the old behaviour moved.
  const plain = harness({ status: 429, code: 'rate_limit_exceeded', message: 'Too many requests' });
- const none = await rejected(plain.ask({ fallback: null }));
+ const none = await rejected(plain.ask({ fallbacks: [] }));
  check('A chat with no fallback named waits out the outage ladder as it did before', !!none && plain.posts === 7 && plain.moved.length === 0 && plain.waits.length === 6);
  // Stopping the turn during the short wait must not start a third request.
  const stop = new AbortController();

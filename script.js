@@ -45,7 +45,7 @@ const composerText = new ComposerText(composerInput, document.querySelector('.co
 LinkChip.watch(document.querySelector('.composer-mirror'));
 LinkChip.watch(thread);
 const settings = new Settings(document.querySelector('.settings'));
-new GeneralSettings({ root: document.querySelector('#settings-general'), context: UserContext, chat: () => chat, settings: () => settings });
+new GeneralSettings({ root: document.querySelector('#settings-general'), context: UserContext });
 new ModelSettings({ root: document.querySelector('#settings-model'), settings });
 new MemorySettings({ root: document.querySelector('#settings-memory'), memory: Memory });
 new ComposerSettings({ root: document.querySelector('#settings-composer'), predictions: Predictions });

@@ -181,15 +181,21 @@ function heard(begin, onContent, onReasoning) {
 async function stream(config, options) {
  // A model whose window is smaller than the agent's instructions would lose them without a word: said before it is asked.
  if (config.window && config.window < NEED) throw new ProviderError(I18n.t('error.window', { window: config.window.toLocaleString('en-US'), need: NEED.toLocaleString('en-US') }));
- const { messages, tools, signal, onReasoning, onContent, onRetry, onFallback, retryBudget, fallback } = options;
+ const { messages, tools, signal, onReasoning, onContent, onRetry, onFallback, retryBudget, fallbacks = [] } = options;
+ // The models that may answer when this one cannot, in the order the person put them in. A list with nothing in it
+ // leaves everything exactly as it was before a fallback was ever named.
+ const spare = (Array.isArray(fallbacks) ? fallbacks : []).filter(Boolean);
+ let touched = false;
  const send = asked => begin => {
-  const live = heard(begin, onContent, onReasoning);
+  // Anything of an answer reaching the screen is shared by every attempt: each endure() only guards its own, and a
+  // half-written reply must keep the next model from starting another.
+  const live = heard(() => { touched = true; begin(); }, onContent, onReasoning);
   if (asked.provider !== 'deepseek') return viaMain(asked, { ...options, ...live });
   return DeepSeek.streamChat({ key: asked.key, model: asked.model, effort: asked.effort, vision: asked.vision, messages, tools, signal, ...live });
  };
- // With another model named, the first one gets its short chance and no more: the ladder of waits belongs to a chat
- // that has nowhere else to go. Without one, nothing here changes what it did before.
- const budget = fallback ? { used: WAITS.length } : retryBudget;
+ // With anywhere to go, the first model gets its short chance and no more: the ladder of waits belongs to a chat that
+ // has nowhere else. Without a list, nothing here changes what it did before.
+ const budget = spare.length ? { used: WAITS.length } : retryBudget;
  let result = null, problem = null;
  try {
   result = await endure(config, send(config), { signal, onRetry, retryBudget: budget });
@@ -200,25 +206,34 @@ async function stream(config, options) {
   // The reason decides the hurry. A spent quota switches at once, because the day does not refill within a minute of
   // waiting. A door that is busy — rate limited, or unable to answer right now — is asked once more after a short
   // wait first, because a spike that clears in seconds should not cost a switch and a notice the user did not need.
-  const reason = fallback && silent(problem) ? why(problem, config.provider) : '';
+  const reason = spare.length && silent(problem) ? why(problem, config.provider) : '';
   if (!reason) throw problem;
   if (reason !== 'quota') {
    onRetry?.();
    await pause(FALLBACK_WAIT, signal);
    try { result = await endure(config, send(config), { signal, onRetry, retryBudget: budget }); }
    catch (again) { problem = again; }
-   // What the second try answered is not always worth moving on for: a refusal the fallback would meet the same way
+   // What the second try answered is not always worth moving on for: a refusal the next model would meet the same way
    // is told as it is, in the first model's words.
    if (!result && !why(problem, config.provider)) throw problem;
   }
   if (!result) {
-   const moved = why(problem, config.provider) || reason;
-   onFallback?.({ from: config, to: fallback, reason: moved, error: problem });
-   // One attempt at the other model, with no ladder of its own: if it fails too, its failure is what the user is told,
-   // and nothing here tries a third.
-   result = await endure(fallback, send(fallback), { signal, onRetry, retryBudget: { used: WAITS.length } });
-   if (retryBudget) retryBudget.used = 0;
-   return counted(fallback, result);
+   const moved = why(problem, config.provider) || reason, cause = problem;
+   // The list in its order, each tried once and nothing behind it: the first that answers is the one the chat goes on
+   // with, and if none does the last failure is what the user is told — with no line, because nothing moved.
+   for (const next of spare) {
+    if (touched) break;
+    try {
+     result = await endure(next, send(next), { signal, onRetry, retryBudget: { used: WAITS.length } });
+    } catch (error) {
+     problem = error;
+     continue;
+    }
+    onFallback?.({ from: config, to: next, reason: moved, error: cause });
+    if (retryBudget) retryBudget.used = 0;
+    return counted(next, result);
+   }
+   throw problem;
   }
  }
  if (retryBudget) retryBudget.used = 0;

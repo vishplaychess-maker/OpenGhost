@@ -855,35 +855,24 @@ class Chat {
   return this.settings.resolve(conv?.record?.model || conv?.model);
  }
 
- // The model that answers when this chat's own is busy or has spent its share of tokens: the chat's first, then the
- // application's, then none at all. An empty choice is a real one - a chat can say it wants no safety net - and a
- // model that is no longer connected is not offered as one either.
- fallbackOf(conv) {
+ // The models that may answer when this chat's own cannot: one this chat named itself (an empty name is a chat that
+ // wants no safety net), otherwise the active profile's list, in the order the person put it in. A model is offered
+ // once, and never the one already being asked.
+ fallbackConfigs(conv, away) {
   const wanted = conv?.record?.fallback ?? conv?.fallback;
-  const id = wanted === '' ? '' : (wanted || this.settings.fallback || '');
-  return id && this.settings.find(id) ? id : '';
- }
-
- // That model as a request: the same thinking level and speed the chat asked for, under its own provider, key and
- // window. Nothing is offered once the turn has already moved to it — a model is no safety net against itself.
- fallbackConfig(conv, away) {
-  const id = this.fallbackOf(conv);
-  if (!id || id === this.modelOf(conv) || id === away?.id) return null;
-  const preferred = conv?.record?.effort || conv?.effort || (conv?.record ? this.settings.legacyEffort : '') || '';
-  const config = this.settings.configFor(id, preferred);
-  if (!config.provider) return null;
-  const wanted = conv?.record?.speed || conv?.speed || 'standard';
-  return { ...config, speed: config.fast && wanted === 'fast' ? 'fast' : 'standard' };
- }
-
- setFallback(id) {
-  const conv = this.active;
-  if (!conv || conv.locked) return false;
-  const value = id && this.settings.find(id) ? id : '';
-  conv.fallback = value;
-  if (conv.record) this.library.update(conv.id, { fallback: value });
-  this.onChange();
-  return true;
+  const ids = wanted === '' ? [] : wanted ? [wanted] : (this.settings.fallbacks || []).map(item => item.model);
+  // The same thinking level and speed the chat asked for, under each model's own provider, key and window.
+  const preferred = conv?.record?.effort || conv?.effort || (conv?.record ? this.settings.legacyEffort : this.settings.profileEffort) || '';
+  const speed = conv?.record?.speed || conv?.speed || 'standard';
+  const out = [], seen = new Set();
+  for (const id of ids) {
+   if (!id || id === away?.id || id === this.modelOf(conv) || seen.has(id) || !this.settings.find(id)) continue;
+   const config = this.settings.configFor(id, preferred);
+   if (!config?.provider) continue;
+   seen.add(id);
+   out.push({ ...config, speed: config.fast && speed === 'fast' ? 'fast' : 'standard' });
+  }
+  return out;
  }
 
  config(conv) {
@@ -1841,8 +1830,9 @@ class Chat {
     signal: turn.controller.signal,
     session: this.session(conv),
     retryBudget: turn.retryBudget ||= { used: 0 },
-    // The other model, and the word taken when the answer moves to it. Both are inert unless a fallback was named.
-    fallback: this.fallbackConfig(conv, turn.config),
+    // The models that may answer instead, in order, and the word taken when the answer moves to one of them. Both are
+    // inert unless the profile (or the chat) names a safety net.
+    fallbacks: this.fallbackConfigs(conv, turn.config),
     onFallback: moved => this.fellBack(conv, turn, view, moved),
     onContent: (delta, stream) => {
      if (!stream.content.trim()) return;
