@@ -46,6 +46,7 @@ LinkChip.watch(document.querySelector('.composer-mirror'));
 LinkChip.watch(thread);
 const settings = new Settings(document.querySelector('.settings'));
 new GeneralSettings({ root: document.querySelector('#settings-general'), context: UserContext, chat: () => chat, settings: () => settings });
+new ModelSettings({ root: document.querySelector('#settings-model'), settings });
 new MemorySettings({ root: document.querySelector('#settings-memory'), memory: Memory });
 new ComposerSettings({ root: document.querySelector('#settings-composer'), predictions: Predictions });
 new NotifySettings({ root: document.querySelector('#settings-notifications') });
@@ -188,6 +189,14 @@ new SelectionMenu({
 });
 window.addMenu = new AddMenu({ button: document.querySelector('.composer-add'), host: main, attachments, chat, input: composerInput });
 settings.show(chat.model);
+// The profile in use beside the model chip: switching one swaps what this window is answered by, for new chats and
+// drafts. The chat on screen keeps its own model, which the chip beside it keeps showing.
+window.profileButton = new ProfileButton({
+  button: document.querySelector('.composer-profile'),
+  settings,
+  chat,
+  onOpen: () => { settings.open(); settings.page('model'); },
+});
 modelStage = new ModelStage({
   button: document.querySelector('.composer-model'),
   root: document.querySelector('.model-stage'),

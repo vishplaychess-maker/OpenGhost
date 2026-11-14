@@ -887,8 +887,9 @@ class Chat {
  }
 
  config(conv) {
-  // Existing chats without the field keep their pre-update preference until it is migrated by load().
-  const preferred = conv?.record?.effort || conv?.effort || (conv?.record ? this.settings.legacyEffort : '') || '';
+  // Existing chats without the field keep their pre-update preference until it is migrated by load(). A draft has no
+  // effort of its own, so it thinks at the active profile's level, the way it is written by the profile's model.
+  const preferred = conv?.record?.effort || conv?.effort || (conv?.record ? this.settings.legacyEffort : this.settings.profileEffort) || '';
   const config = this.settings.configFor(this.modelOf(conv), preferred);
   const wanted = conv?.record?.speed || conv?.speed || 'standard';
   return { ...config, speed: config.fast && wanted === 'fast' ? 'fast' : 'standard' };

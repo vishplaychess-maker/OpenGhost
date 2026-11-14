@@ -326,6 +326,11 @@ class Settings {
   this.mode = MODES.includes(mode) ? mode : DEFAULT_MODE;
   // Whether the picker shows only the models that cost nothing. A way of looking, kept between starts.
   this.freeOnly = localStorage.getItem(STORAGE.free) === 'on';
+  // The model profiles: what this window is answered by, as a named preset rather than a single remembered model.
+  // Read from the person's own folder, so it arrives a moment after the rest of the settings.
+  this.profiles = new ModelProfiles();
+  this.profile = 'default';
+  this.profileEffort = '';
   // The model another one is answered by when the first is busy or has spent its share. Empty means none: the app
   // behaves exactly as it did before anyone chose one. A chat may name its own, which comes first.
   this.fallback = localStorage.getItem(STORAGE.fallback) || '';
@@ -351,6 +356,70 @@ class Settings {
    this.paint();
   });
   this.refreshAll();
+  this.loadProfiles();
+ }
+
+ // The profiles are read after the settings are built, because the file lives where the chats do and is asked for over
+ // the same bridge. Until it arrives the window keeps the model it had, which is what an install from before profiles
+ // means anyway.
+ loadProfiles() {
+  const seed = { model: this.model, reasoning: this.legacyEffort, fallback: this.fallback };
+  return this.profiles.load(seed).then(() => this.applyProfile()).catch(() => {});
+ }
+
+ // What the active profile says this window is answered by and how. A profile with no model of its own leaves the
+ // window's model alone — an empty preset is not a choice of "no model".
+ applyProfile() {
+  const profile = this.profiles.active();
+  if (!profile) return;
+  this.profile = profile.id;
+  this.profileEffort = typeof profile.reasoning === 'string' ? profile.reasoning : '';
+  if (profile.model) this.model = profile.model;
+  this.changed();
+ }
+
+ // Switching profiles carries the window's model with it; every chat already open keeps the one it was given.
+ async setProfile(id) {
+  if (id === this.profile) return false;
+  if (!await this.profiles.activate(id)) return false;
+  this.applyProfile();
+  return true;
+ }
+
+ // What the Model page's Apply does: the profile in use takes the choices made on the page.
+ async saveProfile(patch) {
+  await this.profiles.update(this.profile, patch);
+  this.applyProfile();
+ }
+
+ get profileName() {
+  return this.profiles.name(this.profiles.active());
+ }
+
+ // The providers that can answer right now, in the order the settings and the picker show them.
+ get connectedProviders() {
+  return ORDER.filter(provider => this.connected(provider));
+ }
+
+ // The Model page's three changes to the list: one made from the one in use, one renamed, one removed. Removing or
+ // making a profile changes what the window is answered by at once, so the page and the composer agree.
+ async createProfile(name) {
+  const made = await this.profiles.create(name, this.profiles.active());
+  if (!made) return '';
+  this.applyProfile();
+  return made.id;
+ }
+
+ async renameProfile(name) {
+  if (!await this.profiles.rename(this.profile, name)) return false;
+  this.changed();
+  return true;
+ }
+
+ async removeProfile() {
+  if (!await this.profiles.remove(this.profile)) return false;
+  this.applyProfile();
+  return true;
  }
 
  // The sections on the left: one highlight glides to the chosen section, and its page rises into view.
@@ -661,6 +730,9 @@ class Settings {
   // A fallback named in another window, and one whose model has since been disconnected, both settle here.
   const chosen = localStorage.getItem(STORAGE.fallback) || '';
   this.fallback = chosen && this.find(chosen) ? chosen : '';
+  // The profiles are read again too: another window may have switched or edited one. Only a file that was read before
+  // is asked for again — a first read is the migration's, and that happens once.
+  if (this.profiles.data) await this.profiles.load({}).then(() => this.applyProfile()).catch(() => {});
   this.changed();
   await this.syncAccounts();
  }

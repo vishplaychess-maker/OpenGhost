@@ -97,7 +97,7 @@ async function main() {
  check('Loading a legacy chat migrates its preference to its own record', legacy.record.effort === 'xhigh');
  s.legacyEffort = 'low';
  check('A migrated chat no longer depends on the old default', chat.config(legacy).effort === 'xhigh');
- const reread = settings(); Object.assign(reread, { accepted: new Set(), readKeys: () => ({}), readHand: () => ({ custom: {} }), readCatalog: () => ({}), has: () => false, changed() {}, syncAccount: async () => {} });
+ const reread = settings(); Object.assign(reread, { accepted: new Set(), readKeys: () => ({}), readHand: () => ({ custom: {} }), readCatalog: () => ({}), has: () => false, changed() {}, syncAccount: async () => {}, profiles: { data: null } });
  reread.effort = 'medium'; await reread.reread();
  check('Quick-window reread never imports the old shared effort', reread.effort === 'medium' && reread.legacyEffort === 'xhigh');
  vm.runInContext(read('routine-panel.js').replace('window.RoutinePanel = RoutinePanel;', 'window.effortAudit = { draftOf }; window.RoutinePanel = RoutinePanel;'), c);

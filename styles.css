@@ -16344,6 +16344,155 @@ html.is-quick .viewer {
   opacity: 1;
 }
 
+/* The profile in use, beside the model it names: quieter than the model, because it is the shelf the model stands on
+   and not the model itself. Hidden when there is only the default one, since then there is nothing to choose. */
+.composer-profile {
+  display: flex;
+  align-items: center;
+  height: var(--composer-button-size);
+  max-width: 132px;
+  padding: 0 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: calc(var(--composer-button-size) / 2);
+  outline: none;
+  background: transparent;
+  color: rgba(var(--composer-fg-rgb), 0.72);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.composer-profile:hover,
+.composer-profile:focus-visible {
+  background: rgba(var(--composer-fg-rgb), 0.06);
+  color: rgb(var(--composer-fg-rgb));
+}
+
+.composer-profile[hidden] {
+  display: none;
+}
+
+/* The rows of the profile list in the settings: one press switches the window, which is the whole of what they do. */
+.model-profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.model-profile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 12px;
+  outline: none;
+  background: rgba(var(--fg-rgb), 0.04);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.model-profile:hover,
+.model-profile:focus-visible {
+  background: rgba(var(--fg-rgb), 0.08);
+}
+
+.model-profile[aria-checked="true"] {
+  background: rgba(var(--fg-rgb), 0.1);
+}
+
+.model-profile .lang-name {
+  flex: none;
+}
+
+.model-profile .lang-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-profile[aria-checked="true"] .lang-check {
+  opacity: 1;
+}
+
+/* The name of a profile being made or renamed: a field and two buttons on one line. */
+.model-profile-name {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.model-profile-name[hidden] {
+  display: none;
+}
+
+.model-profile-name .settings-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The three choices of a profile hold their lists as the language menu does, so the rows there and here read alike. */
+.model-choice-block .quick-row .lang-button {
+  min-width: 190px;
+  justify-content: space-between;
+}
+
+.model-provider-menu,
+.model-model-menu,
+.model-reasoning-menu {
+  min-width: 218px;
+  max-height: min(360px, 55vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.composer-profile-menu {
+  width: min(280px, calc(100vw - 20px));
+  max-height: min(320px, 55vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* The way through to the page that makes profiles stands apart from them, with a rule above it. */
+.composer-profile-menu .is-manage {
+  margin-top: 5px;
+  border-top: 1px solid rgba(var(--fg-rgb), 0.1);
+  border-radius: 0 0 11px 11px;
+}
+
+/* What the Model section adds to the tab icons: the plug was taken, so the layers stand for a stack of presets. */
+.settings-tab-icon .layer-mid,
+.settings-tab-icon .layer-low {
+  opacity: 0.55;
+}
+
+/* The settings' own menu animation, for the highlight this page and the composer's chip both move by hand. */
+.model-provider-menu .lang-glide,
+.model-model-menu .lang-glide,
+.model-reasoning-menu .lang-glide,
+.composer-profile-menu .lang-glide {
+  opacity: 0;
+  transition:
+    transform 0.12s cubic-bezier(0.32, 0.72, 0, 1),
+    height 0.12s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 0.12s ease-out;
+}
+
 /* Settings → About (settings-about.js). */
 .settings-tab-icon .info-dot {
   transform-box: fill-box;
