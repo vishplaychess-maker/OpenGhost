@@ -208,6 +208,8 @@ function build(request, extras = { marks: true, thinking: true }) {
   stream: true,
   ...(extras.thinking ? thinking(request) : {}),
  };
+ // A temperature is only sent when the model is not thinking: reasoning models reject it.
+ if (typeof request.temperature === 'number' && (!request.effort || request.effort === 'none')) body.temperature = request.temperature;
  if (request.fast === true && ['standard', 'fast'].includes(request.speed)) body.service_tier = request.speed === 'fast' ? 'priority' : 'default';
  // The mark at the end of the request: OpenRouter puts it on the last block and moves it on as the chat grows.
  // A request beside the chat (`aside`) reads the chat's cache and leaves no mark at its own end.
@@ -370,4 +372,4 @@ async function stream(request, { signal, onEvent = () => {}, apiUrl = API_URL } 
  return result;
 }
 
-module.exports = { models, account, speed, stream, convert, build, described };
+module.exports = { supports_temperature: true, models, account, speed, stream, convert, build, described };

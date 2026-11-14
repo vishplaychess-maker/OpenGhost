@@ -160,6 +160,9 @@ const functions = tools => tools.map(tool => ({ type: 'function', function: { na
 
 function build(request, asked = { pictures: request.vision === true, tools: !!request.tools?.length, usage: true }) {
 	const body = { model: request.model, messages: convert(request.messages, { vision: asked.pictures }), stream: true };
+ // A temperature is only sent when the model is not thinking: reasoning models reject it, and a profile's temperature
+ // is a wish about a plain answer, not about a thought.
+ if (typeof request.temperature === 'number' && (!request.effort || request.effort === 'none')) body.temperature = request.temperature;
 	// The tokens used come with the answer's last event by themselves, where the model takes the word for it.
 	if (asked.usage) body.stream_options = { include_usage: true };
 	const room = request.maxTokens ? (request.output ? Math.min(request.maxTokens, request.output) : request.maxTokens) : 0;
@@ -297,4 +300,4 @@ async function stream(request, { signal, onEvent = () => {}, apiUrl = API_URL } 
 	return result;
 }
 
-module.exports = { models, stream, convert, build, described, API_URL };
+module.exports = { supports_temperature: true, models, stream, convert, build, described, API_URL };

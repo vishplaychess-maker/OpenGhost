@@ -32,7 +32,7 @@ async function main() {
  ];
  function settings() {
   const s = Object.create(c.window.Settings.prototype);
-  Object.assign(s, { models: copy(models), model: 'gpt', shown: '', effort: 'high', legacyEffort: 'xhigh', efforts: ['low', 'medium', 'high', 'xhigh'], keys: {}, hand: { custom: {} }, connected: () => true });
+  Object.assign(s, { models: copy(models), model: 'gpt', shown: '', effort: 'high', legacyEffort: 'xhigh', efforts: ['low', 'medium', 'high', 'xhigh'], keys: {}, hand: { custom: {} }, connected: () => true, profiles: { active: () => null } });
   return s;
  }
  const s = settings();

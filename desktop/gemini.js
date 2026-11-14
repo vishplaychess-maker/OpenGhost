@@ -227,6 +227,8 @@ function build(request, { pictures = request.vision !== false, tools = !!request
  if (room) config.maxOutputTokens = room;
  const think = thinking ? budgetOf(request, room, true) : null;
  if (think) config.thinkingConfig = think;
+ // A temperature is only sent when the model is not thinking: a thinking budget and a temperature pull apart.
+ if (typeof request.temperature === 'number' && (!request.effort || request.effort === 'none')) config.temperature = request.temperature;
  if (Object.keys(config).length) body.generationConfig = config;
  if (tools && request.tools?.length) body.tools = [{ functionDeclarations: declarations(request.tools) }];
  return body;
@@ -341,4 +343,4 @@ async function stream(request, { signal, onEvent = () => {}, apiUrl = API_URL } 
  return result;
 }
 
-module.exports = { models, stream, convert, build, described, API_URL };
+module.exports = { supports_temperature: true, models, stream, convert, build, described, API_URL };

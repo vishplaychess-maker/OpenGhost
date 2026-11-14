@@ -209,6 +209,9 @@ async function stream(request, context) {
   reasoning: effort && effort !== 'none' ? { effort, summary: 'auto' } : { effort: 'none' },
  };
  if (request.fast === true && ['standard', 'fast'].includes(request.speed)) body.service_tier = request.speed === 'fast' ? 'priority' : 'default';
+ // A temperature is only sent where a plain answer is being asked for: reasoning models and the two sign-in backends
+ // (ChatGPT and Grok) do not take one.
+ if (typeof request.temperature === 'number' && (!request.effort || request.effort === 'none') && !['chatgpt', 'grok'].includes(request.provider)) body.temperature = request.temperature;
  if (tools?.length) {
   body.tools = tools.map(tool => ({ type: 'function', name: tool.function.name, description: tool.function.description, parameters: tool.function.parameters, strict: false }));
   body.tool_choice = 'auto';
@@ -273,4 +276,4 @@ async function stream(request, context) {
  throw error('OpenAI disconnected before completing the answer', 0, 'network');
 }
 
-module.exports = { models, stream, convert };
+module.exports = { supports_temperature: true, models, stream, convert };

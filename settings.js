@@ -333,6 +333,10 @@ class Settings {
   this.profileEffort = '';
   // The active profile's fallbacks, in its order: the models that may answer when the chat's own cannot.
   this.fallbacks = [];
+  // How the profile's model is asked: a temperature of its own (null means the model's), and a window of its own
+  // (0 means the model's). Both belong to the profile's model, not to every chat that happens to be open.
+  this.temperature = null;
+  this.contextWindow = 0;
   this.checks = {};
   this.checked = new Set();
   // Keys saved in an earlier session count as working until a check says otherwise.
@@ -375,6 +379,8 @@ class Settings {
   this.profile = profile.id;
   this.profileEffort = typeof profile.reasoning === 'string' ? profile.reasoning : '';
   this.fallbacks = Array.isArray(profile.fallbacks) ? profile.fallbacks.map(item => ({ ...item })) : [];
+  this.temperature = typeof profile.temperature === 'number' ? profile.temperature : null;
+  this.contextWindow = Number(profile.contextWindow) > 0 ? Math.round(Number(profile.contextWindow)) : 0;
   if (profile.model) this.model = profile.model;
   this.changed();
  }
@@ -623,6 +629,11 @@ class Settings {
   const provider = model?.provider || FIRST_PROVIDER;
   const efforts = model?.efforts?.length ? model.efforts : EFFORTS;
   const effort = efforts.includes(preferred) ? preferred : [model?.defaultEffort, DEFAULT_EFFORT].find(level => efforts.includes(level)) || efforts[efforts.length - 1];
+  // A window written on a profile belongs to that profile's model: a chat that was given another model keeps that
+  // model's own window, which is the one the chat actually fits.
+  const mine = !!model && id === this.profiles.active()?.model;
+  const window = mine && this.contextWindow > 0 ? this.contextWindow
+   : SERVED.has(provider) ? model?.context || LOCAL.window : undefined;
   return {
    id: model?.id || id,
    provider,
@@ -631,7 +642,10 @@ class Settings {
    key: this.keys[provider] || '',
    address: provider === 'custom' ? this.hand.custom.address : undefined,
    // The window a model on a server of the user's works in: Ollama is asked for it with every request.
-   window: SERVED.has(provider) ? model?.context || LOCAL.window : undefined,
+   window,
+   // An engine that can carry a temperature reads this; one that cannot leaves it alone, and a reasoning model is never
+   // sent one (see the engines' own rule).
+   temperature: mine && typeof this.temperature === 'number' ? this.temperature : null,
    ready: !!model && this.connected(provider),
    effort,
    efforts,
@@ -652,6 +666,8 @@ class Settings {
  }
 
  windowOf(id) {
+  // The same rule configFor uses: a profile's own window stands for the model it names, and nowhere else.
+  if (id === this.profiles.active()?.model && this.contextWindow > 0) return this.contextWindow;
   return this.find(id)?.context || DEFAULT_CONTEXT;
  }
 

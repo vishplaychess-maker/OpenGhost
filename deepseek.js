@@ -75,7 +75,7 @@ function plain(messages) {
  return count ? [{ role: 'system', content: messages.slice(0, count).map(message => message.content).join('\n\n') }, ...rest] : rest;
 }
 
-async function streamChat({ key, model, effort, vision = true, messages, tools, signal, onReasoning, onContent, onActivity, maxTokens = 0 }) {
+async function streamChat({ key, model, effort, vision = true, messages, tools, signal, onReasoning, onContent, onActivity, maxTokens = 0, temperature }) {
  const response = await request('/chat/completions', key, {
   method: 'POST',
   signal,
@@ -87,6 +87,8 @@ async function streamChat({ key, model, effort, vision = true, messages, tools, 
    stream: true,
    stream_options: { include_usage: true },
    ...(maxTokens ? { max_tokens: maxTokens } : {}),
+   // A temperature is only sent when this model is not thinking, which is exactly when thinking is off.
+   ...(typeof temperature === 'number' && effort === 'none' ? { temperature } : {}),
    thinking: { type: effort === 'none' ? 'disabled' : 'enabled' },
    reasoning_effort: effort,
   }),
@@ -161,5 +163,5 @@ async function balance(key, signal) {
  return (body.balance_infos || []).filter(item => item?.currency).map(item => ({ currency: item.currency, total: Number(item.total_balance) || 0 }));
 }
 
-window.DeepSeek = { listModels, streamChat, complete, balance, DeepSeekError };
+window.DeepSeek = { listModels, streamChat, complete, balance, DeepSeekError, supports_temperature: true };
 })();

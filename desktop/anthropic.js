@@ -170,6 +170,8 @@ function build(request, quiet = true) {
   ...thinking(request, quiet),
  };
  if (request.fast === true && request.speed === 'fast') params.speed = 'fast';
+ // A temperature is only sent when the model is not thinking: the API refuses the two in one request.
+ if (typeof request.temperature === 'number' && (!request.effort || request.effort === 'none')) params.temperature = request.temperature;
  if (system.length) params.system = system.map((part, k) => ({ type: 'text', text: part, ...(!once && (k === 0 || k === system.length - 1) ? { cache_control: CACHE } : {}) }));
  // The mark at the end of the request: the API puts it on the last block and moves it on as the chat grows.
  if (!once && !aside) params.cache_control = CACHE;
@@ -242,4 +244,4 @@ async function stream(request, { signal, onEvent = () => {}, baseURL }) {
  };
 }
 
-module.exports = { models, stream, convert, build, describe, fastOf };
+module.exports = { supports_temperature: true, models, stream, convert, build, describe, fastOf };

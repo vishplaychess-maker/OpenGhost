@@ -52,6 +52,17 @@ class ModelSettings {
     <div class="quick-row"><span class="quick-row-label">${I18n.t('settings.model.provider')}</span><button type="button" class="lang-button model-provider-button" aria-haspopup="listbox" aria-expanded="false"><span class="model-provider-now"></span>${ARROW}</button></div>
     <div class="quick-row"><span class="quick-row-label">${I18n.t('settings.model.model')}</span><button type="button" class="lang-button model-model-button" aria-haspopup="listbox" aria-expanded="false"><span class="model-model-now"></span>${ARROW}</button></div>
     <div class="quick-row"><span class="quick-row-label">${I18n.t('settings.model.reasoning')}</span><button type="button" class="lang-button model-reasoning-button" aria-haspopup="listbox" aria-expanded="false"><span class="model-reasoning-now"></span>${ARROW}</button></div>
+    <div class="quick-row model-temperature-row">
+     <span class="quick-row-label">${I18n.t('settings.model.temperature')}</span>
+     <div class="model-temperature">
+      <input type="range" class="model-temperature-range" min="0" max="2" step="0.1" aria-label="${I18n.t('settings.model.temperature')}">
+      <span class="model-temperature-now"></span>
+      <button type="button" class="settings-button model-temperature-reset">${I18n.t('settings.model.temperature.reset')}</button>
+     </div>
+    </div>
+    <p class="settings-hint model-temperature-hint" hidden>${I18n.t('settings.model.temperature.unsupported')}</p>
+    <div class="quick-row"><span class="quick-row-label">${I18n.t('settings.model.context')}</span><input class="settings-key settings-field model-context" type="number" min="0" step="1024" inputmode="numeric" aria-label="${I18n.t('settings.model.context')}"></div>
+    <p class="settings-hint model-context-hint">${I18n.t('settings.model.context.hint')}</p>
     <p class="settings-status model-status" role="status"></p>
     <div class="lang-menu model-provider-menu" popover role="listbox" aria-label="${I18n.t('settings.model.provider')}"></div>
     <div class="lang-menu model-model-menu" popover role="listbox" aria-label="${I18n.t('settings.model.model')}"></div>
@@ -131,6 +142,24 @@ class ModelSettings {
   this.root.querySelector('.model-profile-rename').addEventListener('click', () => this.openName('rename'));
   this.root.querySelector('.model-profile-delete').addEventListener('click', () => this.remove());
   this.root.querySelector('.model-apply').addEventListener('click', () => this.apply());
+  this.slider = this.root.querySelector('.model-temperature-range');
+  this.sliderNow = this.root.querySelector('.model-temperature-now');
+  this.contextInput = this.root.querySelector('.model-context');
+  this.slider.addEventListener('input', () => {
+   this.draft = { ...this.draft, temperature: Number(this.slider.value) };
+   this.dirty = true;
+   this.showChoice();
+  });
+  this.root.querySelector('.model-temperature-reset').addEventListener('click', () => {
+   this.draft = { ...this.draft, temperature: null };
+   this.dirty = true;
+   this.showChoice();
+  });
+  this.contextInput.addEventListener('input', () => {
+   const value = Math.max(0, Math.round(Number(this.contextInput.value) || 0));
+   this.draft = { ...this.draft, contextWindow: value };
+   this.dirty = true;
+  });
   for (const kind of ['provider', 'model', 'reasoning']) this.pane(kind);
   // A key added or a provider's list read again changes what these lists can offer.
   const prior = this.settings.onModels;
@@ -218,7 +247,13 @@ class ModelSettings {
   const provider = profile?.provider || model?.provider || this.settings.find(this.settings.model)?.provider || this.providers[0] || '';
   const list = this.modelsOf(provider);
   const chosen = list.find(item => item.id === profile?.model) || list[0];
-  return { provider, model: chosen?.id || profile?.model || '', reasoning: profile?.reasoning || '' };
+  return {
+   provider,
+   model: chosen?.id || profile?.model || '',
+   reasoning: profile?.reasoning || '',
+   temperature: typeof profile?.temperature === 'number' ? profile.temperature : null,
+   contextWindow: Number(profile?.contextWindow) > 0 ? Math.round(Number(profile.contextWindow)) : 0,
+  };
  }
 
  sync() {
@@ -279,6 +314,16 @@ class ModelSettings {
   const model = this.settings.find(draft.model);
   this.panes.get('model').now.textContent = model?.name || draft.model || I18n.t('settings.model.none');
   this.panes.get('reasoning').now.textContent = draft.reasoning ? I18n.t(`effort.${draft.reasoning}`) : I18n.t('settings.model.reasoning.default');
+  // The temperature is the profile's own wish, so it says "model default" until one is set; an engine that cannot carry
+  // one shows why rather than a slider that would do nothing.
+  const takes = window.Providers?.takesTemperature?.(draft.provider) !== false;
+  this.slider.disabled = !takes;
+  this.root.querySelector('.model-temperature-hint').hidden = takes;
+  this.slider.value = String(typeof draft.temperature === 'number' ? draft.temperature : 1);
+  this.sliderNow.textContent = typeof draft.temperature === 'number' ? draft.temperature.toFixed(1) : I18n.t('settings.model.temperature.default');
+  this.root.querySelector('.model-temperature-reset').hidden = typeof draft.temperature !== 'number';
+  this.contextInput.value = String(draft.contextWindow || 0);
+  this.contextInput.placeholder = String(model?.context || 0);
   const profile = this.profile;
   this.root.querySelector('.model-profile-rename').hidden = profile?.id === 'default';
   this.root.querySelector('.model-profile-delete').hidden = profile?.id === 'default';
@@ -322,7 +367,13 @@ class ModelSettings {
  async apply() {
   const draft = this.draft;
   if (!draft) return;
-  await this.settings.saveProfile({ provider: draft.provider, model: draft.model, reasoning: draft.reasoning });
+  await this.settings.saveProfile({
+   provider: draft.provider,
+   model: draft.model,
+   reasoning: draft.reasoning,
+   temperature: typeof draft.temperature === 'number' ? draft.temperature : null,
+   contextWindow: draft.contextWindow || 0,
+  });
   this.draft = null;
   this.sync();
   this.say(I18n.t('settings.model.applied', { name: this.settings.profileName }));

@@ -10,6 +10,9 @@ bridge?.onEvent(data => listeners.get(data.id)?.(data));
 // The least window a model needs to hold the agent's instructions and tools (about 12,400 tokens) and still answer.
 const NEED = 16000;
 const NAMES = { deepseek: 'DeepSeek', openai: 'OpenAI', chatgpt: 'ChatGPT', grok: 'Grok', anthropic: 'Anthropic', openrouter: 'OpenRouter', nvidia: 'NVIDIA', gemini: 'Gemini', venice: 'Venice', iteracompute: 'IteraCompute', zro: 'Zro', infron: 'Infron', tokenharbor: 'Token Harbor', yeta: 'Yeta', wusrouter: 'WusRouter', coarena: 'Coarena', nararouter: 'NaraRouter', local: 'Local', custom: 'Custom API' };
+// The providers whose engine can carry a temperature: each engine exports the same word, and the test beside this file
+// checks the two lists agree, so an engine cannot quietly promise it here and drop it there, or the reverse.
+const TEMPERATURE = new Set(['openai', 'anthropic', 'deepseek', 'gemini', 'openrouter', 'nvidia', 'venice', 'iteracompute', 'zro', 'infron', 'tokenharbor', 'yeta', 'wusrouter', 'coarena', 'nararouter']);
 
 class ProviderError extends Error {
  constructor(message, status = 0, code = '') {
@@ -191,7 +194,7 @@ async function stream(config, options) {
   // half-written reply must keep the next model from starting another.
   const live = heard(() => { touched = true; begin(); }, onContent, onReasoning);
   if (asked.provider !== 'deepseek') return viaMain(asked, { ...options, ...live });
-  return DeepSeek.streamChat({ key: asked.key, model: asked.model, effort: asked.effort, vision: asked.vision, messages, tools, signal, ...live });
+  return DeepSeek.streamChat({ key: asked.key, model: asked.model, effort: asked.effort, vision: asked.vision, temperature: asked.temperature, messages, tools, signal, ...live });
  };
  // With anywhere to go, the first model gets its short chance and no more: the ladder of waits belongs to a chat that
  // has nowhere else. Without a list, nothing here changes what it did before.
@@ -323,5 +326,5 @@ async function speed({ provider, key, model }) {
  return { fast: reply?.fast === true };
 }
 
-window.Providers = { stream, complete, predict, models, account, speed, retry, NAMES, NEED, available: !!bridge };
+window.Providers = { stream, complete, predict, models, account, speed, retry, NAMES, NEED, available: !!bridge, takesTemperature: provider => TEMPERATURE.has(provider) };
 })();
