@@ -9,10 +9,10 @@ bridge?.onEvent(data => listeners.get(data.id)?.(data));
 
 // The least window a model needs to hold the agent's instructions and tools (about 12,400 tokens) and still answer.
 const NEED = 16000;
-const NAMES = { deepseek: 'DeepSeek', openai: 'OpenAI', chatgpt: 'ChatGPT', grok: 'Grok', anthropic: 'Anthropic', openrouter: 'OpenRouter', nvidia: 'NVIDIA', gemini: 'Gemini', venice: 'Venice', iteracompute: 'IteraCompute', zro: 'Zro', infron: 'Infron', tokenharbor: 'Token Harbor', yeta: 'Yeta', wusrouter: 'WusRouter', coarena: 'Coarena', nararouter: 'NaraRouter', local: 'Local', custom: 'Custom API' };
+const NAMES = { deepseek: 'DeepSeek', openai: 'OpenAI', chatgpt: 'ChatGPT', grok: 'Grok', anthropic: 'Anthropic', openrouter: 'OpenRouter', nvidia: 'NVIDIA', gemini: 'Gemini', venice: 'Venice', iteracompute: 'IteraCompute', zro: 'Zro', infron: 'Infron', tokenharbor: 'Token Harbor', yeta: 'Yeta', wusrouter: 'WusRouter', coarena: 'Coarena', nararouter: 'NaraRouter', crowllm: 'CrowLLM', local: 'Local', custom: 'Custom API' };
 // The providers whose engine can carry a temperature: each engine exports the same word, and the test beside this file
 // checks the two lists agree, so an engine cannot quietly promise it here and drop it there, or the reverse.
-const TEMPERATURE = new Set(['openai', 'anthropic', 'deepseek', 'gemini', 'openrouter', 'nvidia', 'venice', 'iteracompute', 'zro', 'infron', 'tokenharbor', 'yeta', 'wusrouter', 'coarena', 'nararouter']);
+const TEMPERATURE = new Set(['openai', 'anthropic', 'deepseek', 'gemini', 'openrouter', 'nvidia', 'venice', 'iteracompute', 'zro', 'infron', 'tokenharbor', 'yeta', 'wusrouter', 'coarena', 'nararouter', 'crowllm']);
 
 class ProviderError extends Error {
  constructor(message, status = 0, code = '') {

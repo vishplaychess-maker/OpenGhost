@@ -2,9 +2,9 @@
 'use strict';
 
 const STORAGE = { effort: 'deepseek.effort', mode: 'openghost.mode', model: 'openghost.model', catalog: 'openghost.catalog', free: 'openghost.freeOnly', fallback: 'openghost.fallbackModel' };
-const KEYS = { openai: 'openai.apiKey', anthropic: 'anthropic.apiKey', deepseek: 'deepseek.apiKey', openrouter: 'openrouter.apiKey', nvidia: 'nvidia.apiKey', gemini: 'gemini.apiKey', venice: 'venice.apiKey', iteracompute: 'iteracompute.apiKey', zro: 'zro.apiKey', infron: 'infron.apiKey', tokenharbor: 'tokenharbor.apiKey', yeta: 'yeta.apiKey', wusrouter: 'wusrouter.apiKey', coarena: 'coarena.apiKey', nararouter: 'nararouter.apiKey', local: 'local.address', custom: 'custom.apiKey' };
+const KEYS = { openai: 'openai.apiKey', anthropic: 'anthropic.apiKey', deepseek: 'deepseek.apiKey', openrouter: 'openrouter.apiKey', nvidia: 'nvidia.apiKey', gemini: 'gemini.apiKey', venice: 'venice.apiKey', iteracompute: 'iteracompute.apiKey', zro: 'zro.apiKey', infron: 'infron.apiKey', tokenharbor: 'tokenharbor.apiKey', yeta: 'yeta.apiKey', wusrouter: 'wusrouter.apiKey', coarena: 'coarena.apiKey', nararouter: 'nararouter.apiKey', crowllm: 'crowllm.apiKey', local: 'local.address', custom: 'custom.apiKey' };
 // The order providers appear in, in the settings and in the model picker.
-const ORDER = ['chatgpt', 'openai', 'grok', 'iteracompute', 'zro', 'infron', 'tokenharbor', 'yeta', 'wusrouter', 'coarena', 'nararouter', 'anthropic', 'deepseek', 'openrouter', 'nvidia', 'gemini', 'venice', 'local', 'custom'];
+const ORDER = ['chatgpt', 'openai', 'grok', 'iteracompute', 'zro', 'infron', 'tokenharbor', 'yeta', 'wusrouter', 'coarena', 'nararouter', 'crowllm', 'anthropic', 'deepseek', 'openrouter', 'nvidia', 'gemini', 'venice', 'local', 'custom'];
 // The providers a plan pays for: reached by signing in, with no key and no field to type one into.
 const ACCOUNTS = ['chatgpt', 'grok'];
 // The provider the app starts with: the settings ask for its key when nothing is connected, and new chats take its first
@@ -31,6 +31,7 @@ const LINKS = {
  wusrouter: ['https://wusrouter.com/', 'wusrouter.com'],
  coarena: ['https://coarena.ai/account/api/keys', 'coarena.ai'],
  nararouter: ['https://router.bynara.id/keys', 'router.bynara.id'],
+ crowllm: ['https://crowllm.com/sign-up', 'crowllm.com'],
 };
 // What the user may write in by hand where a provider's own word is not enough. `models`: names of models its list
 // does not hold. `context`: the size of the window, for the providers whose servers may not tell it. `address`: where a
@@ -49,6 +50,7 @@ const HAND = {
  wusrouter: { models: 'wusrouter.models' },
  coarena: { models: 'coarena.models' },
  nararouter: { models: 'nararouter.models' },
+ crowllm: { models: 'crowllm.models' },
  local: { models: 'local.models', context: 'local.context' },
  custom: { models: 'custom.models', context: 'custom.context', address: 'custom.address' },
 };
@@ -57,7 +59,7 @@ const HAND = {
 const LOCAL = { window: 32768, presets: [['Ollama', 'http://localhost:11434'], ['LM Studio', 'http://localhost:1234']] };
 // The providers reached by an address the user gives.
 const SERVED = new Set(['local', 'custom']);
-const PLACEHOLDERS = { anthropic: 'sk-ant-…', openrouter: 'sk-or-…', nvidia: 'nvapi-…', gemini: 'AIza…', venice: 'vapi_…', tokenharbor: 'thk_live_…', coarena: 'coa_…', nararouter: 'sk-nry-…' };
+const PLACEHOLDERS = { anthropic: 'sk-ant-…', openrouter: 'sk-or-…', nvidia: 'nvapi-…', gemini: 'AIza…', venice: 'vapi_…', tokenharbor: 'thk_live_…', coarena: 'coa_…', nararouter: 'sk-nry-…', crowllm: 'sk-crow-…' };
 const MODES = ['ask', 'auto', 'full'];
 const DEFAULT_MODE = 'ask';
 const CHECK_DELAY = 400;
@@ -801,6 +803,7 @@ class Settings {
    section('wusrouter', 'WusRouter', keyRow('wusrouter') + handRow('wusrouter', 'models', 'uc/deepseek-v4-flash:free')),
    section('coarena', 'Coarena', keyRow('coarena') + handRow('coarena', 'models', 'claude-sonnet-5-5')),
    section('nararouter', 'NaraRouter', keyRow('nararouter') + handRow('nararouter', 'models', 'agnes-3-flash')),
+   section('crowllm', 'CrowLLM', keyRow('crowllm') + handRow('crowllm', 'models', 'gpt-4o:free')),
    section('anthropic', 'Anthropic', keyRow('anthropic') + handRow('anthropic', 'models', 'claude-…')),
    section('deepseek', 'DeepSeek', keyRow('deepseek')),
    section('openrouter', 'OpenRouter', keyRow('openrouter')),

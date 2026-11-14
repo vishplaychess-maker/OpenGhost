@@ -38,7 +38,7 @@ const temperatureOf = post => post?.body?.temperature ?? post?.body?.generationC
 
 async function main() {
  // Every engine that says it takes one puts it where its own API expects it — and only when nothing is being thought.
- const chat = ['openrouter', 'nvidia', 'venice', 'iteracompute', 'zro', 'infron', 'tokenharbor', 'yeta', 'wusrouter', 'coarena', 'nararouter'];
+ const chat = ['openrouter', 'nvidia', 'venice', 'iteracompute', 'zro', 'infron', 'tokenharbor', 'yeta', 'wusrouter', 'coarena', 'nararouter', 'crowllm'];
  for (const name of chat) {
   const plain = await sent(`desktop/${name}.js`);
   check(name + ': a temperature reaches the request body when reasoning is off', temperatureOf(plain.posts[0]) === 0.4);
@@ -70,7 +70,7 @@ async function main() {
   openai: 'desktop/openai.js', anthropic: 'desktop/anthropic.js', gemini: 'desktop/gemini.js', openrouter: 'desktop/openrouter.js',
   nvidia: 'desktop/nvidia.js', venice: 'desktop/venice.js', iteracompute: 'desktop/iteracompute.js', zro: 'desktop/zro.js',
   infron: 'desktop/infron.js', tokenharbor: 'desktop/tokenharbor.js', yeta: 'desktop/yeta.js', wusrouter: 'desktop/wusrouter.js',
-  coarena: 'desktop/coarena.js', nararouter: 'desktop/nararouter.js', deepseek: 'deepseek.js',
+  coarena: 'desktop/coarena.js', nararouter: 'desktop/nararouter.js', crowllm: 'desktop/crowllm.js', deepseek: 'deepseek.js',
  }).filter(([, file]) => /supports_temperature: true/.test(read(file))).map(([name]) => name).sort();
  check('The providers listed for a temperature are exactly the engines that export the word', listed.join() === declared.join());
  check('The engines that do not take one do not claim to', !/supports_temperature/.test(read('desktop/local.js')) && !listed.includes('local') && !listed.includes('custom'));
