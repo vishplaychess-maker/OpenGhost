@@ -22978,3 +22978,185 @@ html:not([data-theme="light"]) .tour :is([data-mark="x"], [data-mark="steam"], [
   transition: opacity 0.3s ease, scale 0.5s cubic-bezier(0.34, 1.5, 0.64, 1);
 }
 .is-split-secondary.has-split-mini > .notes-pill { left: 58px; }
+
+/* The Trading Chart, over the whole window: a glass panel on a scrim, drawn in the window's own colours and rebuilt
+   when the theme changes, because the candles are painted on a canvas and cannot read CSS. The title bar stays above
+   it, so the window can still be moved and closed from there. */
+.chart-view {
+  position: fixed;
+  top: var(--titlebar-height);
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 22px 22px;
+  background: rgba(0, 0, 0, calc(0.42 * var(--shadow, 1)));
+  backdrop-filter: blur(6px);
+}
+
+.chart-view[hidden] {
+  display: none;
+}
+
+.chart-panel {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  width: 100%;
+  height: 100%;
+  max-width: 1500px;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--chat-bg);
+  box-shadow: inset 0 0 0 1px rgba(var(--fg-rgb), 0.1), 0 24px 80px -24px rgba(0, 0, 0, 0.8);
+}
+
+.chart-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 11px 14px;
+  border-bottom: 1px solid rgba(var(--fg-rgb), 0.08);
+}
+
+.chart-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chart-title {
+  color: var(--fg-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.chart-source {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.chart-source-symbol {
+  color: rgba(var(--fg-rgb), 0.8);
+}
+
+.chart-source-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chart-frames {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(var(--fg-rgb), 0.06);
+}
+
+.chart-frame {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  outline: none;
+  background: transparent;
+  color: var(--fg-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  cursor: pointer;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.chart-frame:hover {
+  color: var(--fg-primary);
+}
+
+.chart-frame[aria-pressed="true"] {
+  background: rgba(var(--fg-rgb), 0.12);
+  color: var(--fg-primary);
+}
+
+.chart-frame:focus-visible {
+  box-shadow: inset 0 0 0 1px rgba(var(--fg-rgb), 0.28);
+}
+
+.chart-spread {
+  color: var(--fg-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chart-spread.is-bare {
+  opacity: 0.55;
+}
+
+.chart-close {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 9px;
+  outline: none;
+  background: transparent;
+  color: rgba(var(--fg-rgb), 0.7);
+  cursor: pointer;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.chart-close:hover,
+.chart-close:focus-visible {
+  background: rgba(var(--fg-rgb), 0.08);
+  color: var(--fg-primary);
+}
+
+.chart-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.chart-stage {
+  position: relative;
+  min-height: 0;
+}
+
+.chart-foot {
+  display: flex;
+  gap: 16px;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 14px 10px;
+  border-top: 1px solid rgba(var(--fg-rgb), 0.08);
+  color: var(--fg-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-legend {
+  white-space: pre;
+}
+
+.chart-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-note:empty {
+  display: none;
+}

@@ -19,6 +19,7 @@ const Telegram = require('./telegram');
 const WhatsApp = require('./whatsapp');
 const Mobile = require('./mobile-bridge');
 const Skills = require('./skills');
+const ChartData = require('./chart-data');
 const Update = require('./update');
 const Pictures = require('./pictures');
 
@@ -333,6 +334,9 @@ ipcMain.on('app:log', (event, row) => { if (fromApp(event)) Tools.logLine(row); 
 ipcMain.on('browser:shown', (event, value) => { if (fromApp(event)) Browser.setShown(value); });
 ipcMain.handle('tool:cancel', (event, id) => { if (fromApp(event)) Tools.cancel(id); });
 ipcMain.handle('tool:environment', event => fromApp(event) ? Tools.environment() : null);
+// The Trading Chart's candles and indicators: market data is fetched here because the page itself may reach only its
+// model provider. A source that cannot be reached is answered with the sample series, which says it is one.
+ipcMain.handle('chart:history', (event, options) => fromApp(event) ? ChartData.history(options && typeof options === 'object' ? options : {}).catch(error => ({ error: error.message || String(error) })) : null);
 ipcMain.handle('tool:guide', (event, folder) => fromApp(event) ? Tools.guide(folder) : null);
 // Agents sharing a folder (Desk in chat.js): which files a command changed, and the ports this computer listens on.
 ipcMain.handle('tool:mark', (event, folder) => fromApp(event) ? Tools.mark(folder) : '');

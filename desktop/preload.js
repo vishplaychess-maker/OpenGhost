@@ -219,6 +219,10 @@ contextBridge.exposeInMainWorld('openghost', {
   account: (provider, key) => ipcRenderer.invoke('llm:account', provider, key),
   speed: (provider, key, model) => ipcRenderer.invoke('llm:speed', provider, key, model),
  },
+ // The Trading Chart's candles and indicators, gathered in the main process (desktop/chart-data.js).
+ chart: {
+  history: options => ipcRenderer.invoke('chart:history', options),
+ },
  // The keys come from the main process's memory, read before the window opened, so asking for them never waits on the disk.
  keys: {
   read: () => ipcRenderer.sendSync('keys:read'),

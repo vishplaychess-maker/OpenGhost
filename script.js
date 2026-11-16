@@ -197,6 +197,11 @@ window.profileButton = new ProfileButton({
   chat,
   onOpen: () => { settings.open(); settings.page('model'); },
 });
+// The trading chart, over the window: from the sidebar's button, or Ctrl+Shift+G.
+if (MAIN_WINDOW) {
+ const chartView = window.chartView = new ChartView();
+ document.querySelector('.sidebar-chart')?.addEventListener('chart-open', () => chartView.toggle());
+}
 modelStage = new ModelStage({
   button: document.querySelector('.composer-model'),
   root: document.querySelector('.model-stage'),
