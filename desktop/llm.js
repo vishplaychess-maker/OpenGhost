@@ -23,10 +23,11 @@ const NaraRouter = require('./nararouter');
 const CrowLLM = require('./crowllm');
 const Refuseless = require('./refuseless');
 const MillionSeek = require('./100milionseek');
+const ModelUXAI = require('./modeluxai');
 const Local = require('./local');
 
 const runs = new Map();
-const ENGINES = { openai: OpenAI, chatgpt: OpenAI, grok: OpenAI, anthropic: Claude, openrouter: OpenRouter, nvidia: Nvidia, gemini: Gemini, venice: Venice, iteracompute: IteraCompute, zro: Zro, infron: Infron, tokenharbor: TokenHarbor, yeta: Yeta, wusrouter: WusRouter, coarena: Coarena, nararouter: NaraRouter, crowllm: CrowLLM, refuseless: Refuseless, '100milionseek': MillionSeek, local: Local, custom: Local };
+const ENGINES = { openai: OpenAI, chatgpt: OpenAI, grok: OpenAI, anthropic: Claude, openrouter: OpenRouter, nvidia: Nvidia, gemini: Gemini, venice: Venice, iteracompute: IteraCompute, zro: Zro, infron: Infron, tokenharbor: TokenHarbor, yeta: Yeta, wusrouter: WusRouter, coarena: Coarena, nararouter: NaraRouter, crowllm: CrowLLM, refuseless: Refuseless, '100milionseek': MillionSeek, modeluxai: ModelUXAI, local: Local, custom: Local };
 // The providers whose plan pays for the models, reached by a sign-in rather than a key.
 const AUTH = { chatgpt: ChatGPT, grok: Grok };
 const PROVIDERS = new Set(Object.keys(ENGINES));
