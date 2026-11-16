@@ -613,8 +613,19 @@ class Settings {
  // The picker offers the models of every connected provider, as each provider lists them. No model is known to the app
  // by itself: with nothing connected there is none, and the picker leads to the settings instead.
  collect() {
-  this.models = ORDER.filter(provider => this.connected(provider)).flatMap(provider => this.catalog[provider] || []);
+  this.models = ORDER.filter(provider => this.connected(provider)).flatMap(provider => (this.catalog[provider] || [])
+   .map(model => this.named(provider, model))
+   .filter(model => model.id));
   this.paint();
+ }
+
+ // A catalogue saved by an earlier shape of the app may name a model by its api and its company alone, without the
+ // provider it belongs to or the id the picker chooses it by. Both are rebuilt from the list the entry stands in, so
+ // a row saved then can still be chosen; an entry that says nothing of what it is is not offered at all.
+ named(provider, model) {
+  const api = typeof model?.api === 'string' && model.api ? model.api : '';
+  const id = typeof model?.id === 'string' && model.id ? model.id : api ? `${provider}:${api}` : '';
+  return { ...model, provider, api, id };
  }
 
  find(id) {

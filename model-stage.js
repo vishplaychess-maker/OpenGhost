@@ -821,7 +821,11 @@ class ModelStage {
 
  pick(row) {
   if (row.dataset.company) { this.toggle(row); return; }
-  const id = row.dataset.model;
+  // A row stands for a model the settings hold; one left over from a catalogue they do not hold cannot be chosen,
+  // and the list stays as it is rather than close on a model that was never taken.
+  const picked = this.settings.find(row.dataset.model);
+  if (!picked) return;
+  const id = picked.id;
   if (id === this.chat.model) { this.close(); return; }
   if (this.chat.hasHistory()) { this.confirm(row); return; }
   this.state = 'hop';
