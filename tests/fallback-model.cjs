@@ -20,7 +20,7 @@ function harness(fail, { fallbacks = [other], waitsReal = false, manual = false 
  let posts = 0, next = 0;
  const decide = typeof fail === 'function' ? fail : (n, model) => model === 'first-model' ? fail : null;
  const bodies = [], waits = [], moved = [], timers = new Map();
- const engine = { module: { exports: {} }, exports: {}, require, TextDecoder, fetch: async (_url, init) => {
+ const engine = { module: { exports: {} }, exports: {}, require, TextDecoder, AbortController, setTimeout, clearTimeout, fetch: async (_url, init) => {
   const asked = JSON.parse(init.body);
   posts++; bodies.push(asked);
   const way = decide(posts, asked.model);

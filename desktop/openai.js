@@ -25,6 +25,16 @@ const error = (message, status = 0, code = '') => Object.assign(new Error(messag
 // same catalogue answers an API key. A model OpenAI adds, or takes away from a plan, is in or out of the list the next
 // time it is read. The public /models only names models, so it says which of the catalogue's a key may use.
 const levelsOf = entry => (entry.supported_reasoning_levels || []).map(level => typeof level === 'string' ? level : level?.effort).filter(Boolean);
+// Ultra is no level a request carries: OpenAI's own Codex sends a model's Ultra as the level its catalogue names for work
+// handed out to helpers (multi_agent_reasoning_effort), else as its Max, else as its highest other level, and lets the
+// model hand work out on its own. The backend turns "ultra" itself down.
+const ULTRA = 'ultra';
+const ultraOf = (entry, levels) => {
+ if (!levels.includes(ULTRA)) return undefined;
+ const named = entry.multi_agent_reasoning_effort;
+ if (named && named !== ULTRA && levels.includes(named)) return named;
+ return levels.includes('max') ? 'max' : levels.filter(level => level !== ULTRA).at(-1) || 'medium';
+};
 const offered = list => list.filter(entry => entry?.slug && entry.visibility === 'list').sort((a, b) => (a.priority ?? Infinity) - (b.priority ?? Infinity));
 
 const describe = provider => entry => {
@@ -40,6 +50,7 @@ const describe = provider => entry => {
   output: Number(entry.max_output_tokens) || Number(entry.max_completion_tokens) || 0,
   vision: !Array.isArray(entry.input_modalities) || entry.input_modalities.includes('image'),
   efforts,
+  ultraEffort: ultraOf(entry, efforts),
   fast: (Array.isArray(entry.service_tiers) && entry.service_tiers.some(tier => ['priority', 'fast'].includes(typeof tier === 'string' ? tier : tier?.id))) || (Array.isArray(entry.additional_speed_tiers) && entry.additional_speed_tiers.includes('fast')),
   defaultEffort: efforts.includes(entry.default_reasoning_level) ? entry.default_reasoning_level : efforts.includes('medium') ? 'medium' : efforts[0],
  };
@@ -157,12 +168,15 @@ function omitUnsupported(body, problem) {
  return true;
 }
 
-async function* events(body) {
+// `alive` hears every piece the connection brings, signs of life included, which carry no event.
+async function* events(body, alive = () => {}) {
  const decoder = new TextDecoder();
  let buffer = '';
  const dataOf = block => block.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+ alive();
  try {
   for await (const chunk of body) {
+   alive();
    buffer = (buffer + decoder.decode(chunk, { stream: true })).replace(/\r\n/g, '\n');
    let at;
    while ((at = buffer.indexOf('\n\n')) >= 0) {
@@ -195,9 +209,35 @@ async function target({ provider, key, session, model, fast, speed }, { chatgpt,
  return { url: `${codexUrl}/responses`, headers };
 }
 
+// How long a stream may bring nothing at all before its connection counts as lost. ChatGPT's backend sends a sign of
+// life every 5 s while it has nothing else to send (an SSE comment), measured over 2,245 events of 25 answers in a row:
+// the longest silence was 5.6 s, a model thinking at length included. Thirty seconds of nothing is six of them missed.
+// For an API key the app has no measure of its own and takes the one OpenAI's Codex takes for any stream: five minutes.
+const QUIET = { chatgpt: 30000, other: 300000 };
+
 async function stream(request, context) {
+ const { signal: outer } = context;
+ // The request stops when the chat stops it, or when its stream falls silent for too long (see QUIET).
+ const own = new AbortController(), relay = () => own.abort(), signal = own.signal;
+ if (outer?.aborted) own.abort();
+ else outer?.addEventListener('abort', relay, { once: true });
+ const quiet = request.provider === 'chatgpt' ? QUIET.chatgpt : QUIET.other;
+ let timer = 0, lost = false;
+ const alive = () => { clearTimeout(timer); timer = setTimeout(() => { lost = true; own.abort(); }, quiet); };
+ try {
+  return await answer(request, { ...context, signal, alive });
+ } catch (cause) {
+  if (lost && !outer?.aborted) throw error(`OpenAI sent nothing for ${quiet / 1000} s: the connection was lost`, 0, 'network');
+  throw cause;
+ } finally {
+  clearTimeout(timer);
+  outer?.removeEventListener('abort', relay);
+ }
+}
+
+async function answer(request, context) {
  const { model: api, effort, vision = true, messages, tools } = request;
- const { signal, onEvent = () => {} } = context;
+ const { signal, alive, onEvent = () => {} } = context;
  const { instructions, input } = convert(messages, vision, request.provider);
  const body = {
   model: api,
@@ -206,7 +246,7 @@ async function stream(request, context) {
   store: false,
   stream: true,
   include: ['reasoning.encrypted_content'],
-  reasoning: effort && effort !== 'none' ? { effort, summary: 'auto' } : { effort: 'none' },
+  reasoning: effort && effort !== 'none' ? { effort: effort === ULTRA ? request.ultraEffort || 'xhigh' : effort, summary: 'auto' } : { effort: 'none' },
  };
  if (request.fast === true && ['standard', 'fast'].includes(request.speed)) body.service_tier = request.speed === 'fast' ? 'priority' : 'default';
  // A temperature is only sent where a plain answer is being asked for: reasoning models and the two sign-in backends
@@ -241,7 +281,7 @@ async function stream(request, context) {
  const result = { content: '', reasoning: '', toolCalls: [], finishReason: null, usage: null, native: { provider: request.provider === 'grok' ? 'grok' : 'openai', items: [] } };
  let textItem = '';
  const say = delta => { result.content += delta; onEvent({ type: 'content', delta }); };
- for await (const event of events(response.body)) {
+ for await (const event of events(response.body, alive)) {
   if ((event.type === 'response.output_item.added' || event.type === 'response.output_item.done') && ['function_call', 'reasoning'].includes(event.item?.type)
    || event.type === 'response.function_call_arguments.delta') onEvent({ type: 'activity' });
   if (event.type === 'response.output_text.delta') {

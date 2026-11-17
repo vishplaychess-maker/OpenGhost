@@ -22,6 +22,30 @@ const host = url => { try { return new URL(String(url)).host.replace(/^www\./, '
 const quote = text => { const said = String(text ?? '').replace(/\s+/g, ' ').trim(); return said ? `“${said}”` : ''; };
 const first = text => String(text || '').split('\n').map(line => line.trim()).find(Boolean) || '';
 
+// What the model is thinking about now, in a few words, from all it has thought in this request so far: the heading of
+// its latest summary where the model writes its thinking under headings (GPT's summaries: "**Checking the prices**"),
+// else its latest finished sentence, for a model that thinks aloud (DeepSeek, most open models; Claude's summaries).
+// A sentence still being written is not shown: it would change with every word.
+const THOUGHT = { most: 70, least: 8, tail: 1600 };
+const plainWords = text => String(text || '').replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim();
+function shorten(text) {
+ const said = plainWords(text).replace(/[:;,.]+$/, '');
+ if (said.length <= THOUGHT.most) return said;
+ const cut = said.slice(0, THOUGHT.most), space = cut.lastIndexOf(' ');
+ return `${(space > THOUGHT.most / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:.]+$/, '')}…`;
+}
+function thought(text) {
+ const all = String(text || '');
+ const heads = [...all.matchAll(/\*\*([^*\n]{3,160}?)\*\*/g)];
+ if (heads.length) return shorten(heads.at(-1)[1]);
+ const tail = all.slice(-THOUGHT.tail);
+ const pieces = tail.split(/(?<=[.!?])\s+|(?<=[。！？])|\n+/);
+ // The last piece is still being written unless the text ends where a sentence does.
+ if (!/[.!?。！？]\s*$|\n\s*$/.test(tail)) pieces.pop();
+ const finished = pieces.map(plainWords).filter(piece => piece.length >= THOUGHT.least);
+ return finished.length ? shorten(finished.at(-1)) : '';
+}
+
 // The words for a step: what is done, and to what. Steps with a look of their own in the chat (the plan, the notepad,
 // a question, pictures, a skill) and those that change nothing a person would follow say nothing here.
 function deed(name, args = {}, cwd = '', apart = null) {
@@ -56,6 +80,11 @@ function deed(name, args = {}, cwd = '', apart = null) {
   case 'browser_press': return say('press', args.key);
   case 'browser_scroll': return say('scroll');
   case 'browser_wait': return say('wait', quote(args.text));
+  // The agent's helpers (helpers.js).
+  case 'spawn_agent': return say('helper', quote(args.task_name));
+  case 'wait_agent': return say('helpers');
+  case 'send_message': return say('tellHelper', quote(args.target));
+  case 'interrupt_agent': return say('stopHelper', quote(args.target));
   case 'take_screenshot': return say('screen');
   case 'move_mouse': return say('moveMouse');
   case 'left_click': return say('click');
@@ -209,5 +238,5 @@ function glance(host, { path, was, now }) {
  return el;
 }
 
-window.AgentLine = { deed, show, glance };
+window.AgentLine = { deed, show, glance, thought };
 })();

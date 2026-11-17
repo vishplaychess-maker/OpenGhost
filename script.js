@@ -27,6 +27,7 @@ let routinePanel = null;
 let routineMaker = null;
 // The agent's plan at the top of the chat, in the app's window: the quick chat's has no room for it.
 let planIsland = null;
+let helperIsland = null;
 let updatePill = null;
 let sidePanels = null;
 let splitView = null;
@@ -39,7 +40,7 @@ ComposerSpace.watch(main, composer);
 const threadBones = new ThreadBones({ app, main, thread });
 ThreadWindow.watch(thread);
 const composerScrollbar = new Scrollbar(composerInput, document.querySelector('.composer-scrollbar'));
-const threadScrollbar = new Scrollbar(thread, document.querySelector('.thread-scrollbar'));
+const threadScrollbar = new Scrollbar(thread, document.querySelector('.thread-scrollbar'), { autoHide: true });
 const chatsScrollbar = new Scrollbar(document.querySelector('.chats-scroll'), document.querySelector('.chats-scrollbar'), { autoHide: true });
 const composerText = new ComposerText(composerInput, document.querySelector('.composer-mirror'));
 LinkChip.watch(document.querySelector('.composer-mirror'));
@@ -94,6 +95,8 @@ const chat = new Chat({
   onPlan: conv => { if (conv === chat.active) planIsland?.sync(); chat.syncAsk(); splitView?.pane?.sync(); },
 });
 if (MAIN_WINDOW) planIsland = new PlanIsland({ main, chat });
+// The agent's helpers, beside the plan (helper-island.js). The quick chat's window has none.
+if (MAIN_WINDOW) helperIsland = new HelperIsland({ main, chat, plan: planIsland });
 // The chats' rows show the last message of each: older chats have it worked out once, a while after the start.
 if (MAIN_WINDOW) library.ready.then(() => setTimeout(() => chat.fillPreviews().catch(() => {}), 4000));
 // A new version of the app, at the top right beside the globe (desktop/update.js); the plan's island keeps clear of it.
@@ -285,6 +288,11 @@ if (MAIN_WINDOW) {
 const spotlight = new Spotlight({ button: searchButton, anchor: main, library, chat: chatList.chat, onSkill: name => {
   if (splitView?.currentChat !== chat && splitView?.pane) { splitView.pane.text.insertSkill(name); splitView.pane.sync(); }
   else { composerText.insertSkill(name); syncComposer(); }
+}, onChat: () => {
+  // The search is going and leaves the keys nowhere; a field pressed meanwhile keeps them.
+  const active = document.activeElement;
+  if (active && active !== document.body && !spotlight.root.contains(active)) return;
+  (splitView?.currentChat !== chat && splitView?.pane ? splitView.pane.input : composerInput).focus({ preventScroll: true });
 } });
 // Typing / in the message field lists the skills over it.
 new SkillPicker({ input: composerInput, text: composerText, anchor: composer, onPick: syncComposer });
@@ -305,12 +313,13 @@ composer.addEventListener('mousedown', (event) => {
 
 function syncComposer() {
   const empty = !composerText.text().trim() && !attachments.count;
-  composerSend.configure({ busy: chat.busy, empty, stopping: !!chat.active?.turn?.controller.signal.aborted });
-  // An empty field offers End while work runs; words or attachments still send a suggestion.
+  // An empty field offers End while work runs, the helpers' too; words or attachments send a suggestion while the agent
+  // itself works, and a plain message while only its helpers do.
+  composerSend.configure({ busy: chat.working, suggest: chat.busy, empty, stopping: !!chat.active?.turn?.controller.signal.aborted });
   const suggesting = chat.busy && !empty;
   composerActions.classList.toggle('is-suggesting', suggesting);
-  // The likely next message waits in the empty field as grey words (predictions.js); anything written sends it away.
-  if (!empty && chat.prediction) chat.forget(chat.active, true);
+  // The likely next message waits in the empty field as grey words (predictions.js). Words in the field hide it, and it
+  // is back once they are wiped out; it goes for good when a message is sent (Chat.send).
   const predicted = empty ? chat.prediction : '';
   if (predicted !== composerField.dataset.predicted) {
     composerField.dataset.predicted = predicted;
@@ -404,6 +413,7 @@ function syncAll() {
   notepad?.sync();
   routinePanel?.sync();
   planIsland?.sync();
+  helperIsland?.sync();
   sidePanels?.sync(focused.activeId);
   splitView?.sync();
   ModePicker.sync();
@@ -448,6 +458,7 @@ composerInput.addEventListener('input', () => {
   unsentTimer = setTimeout(keepUnsent, UNSENT_DELAY);
 });
 window.addEventListener('pagehide', keepUnsent);
+Predictions.room({ field: composerField, input: composerInput, placeholder: composerPlaceholder });
 
 // Tab or the right arrow in the empty field takes the predicted message into it, to be changed or sent.
 composerInput.addEventListener('keydown', (event) => {
@@ -467,7 +478,7 @@ composerInput.addEventListener('keydown', (event) => {
 // Escape stops the agent from anywhere in the window, not only from the message field. An open menu or dialog, and
 // fields that use Escape themselves (renaming, search, the address bar), get it first.
 document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || !chat.busy) return;
+  if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || !chat.working) return;
   if (splitView?.opened && splitView.currentChat !== chat) return;
   if (document.querySelector(':popover-open:not(.mini), dialog[open]')) return;
   event.preventDefault();
@@ -494,9 +505,9 @@ if (!window.openghost?.quick) {
   });
 }
 
-// The language can't change while an agent is at work in this window: the page is read anew for it.
+// The language can't change while an agent, or a helper of one, is at work in this window: the page is read anew for it.
 LanguageSettings.busy = () => [chat, ...MiniChat.all().map(mini => mini.chat)]
-  .some(one => one && [...one.conversations.values()].some(conv => conv.turn));
+  .some(one => one && [...one.conversations.values()].some(conv => conv.turn || window.Helpers?.working(conv).length));
 // While an agent works here, the window is not slowed down out of sight (desktop/main.js).
 if (!window.openghost?.quick && window.openghost?.working) {
   let working = false;

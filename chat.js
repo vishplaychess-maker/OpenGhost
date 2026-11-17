@@ -2,6 +2,8 @@
 'use strict';
 
 const FOLLOW_DISTANCE = 48;
+// The least time between two thoughts beside the ghost while the model thinks (Chat.think), in ms.
+const THINK = 2500;
 const FOLLOW_SPRING = [130, 23];
 const BOTTOM_SHOW = 120;
 const JUMP = { base: 420, perPixel: 0.05, max: 950 };
@@ -69,6 +71,8 @@ const TOOL_NOTES = {
  memoryOff: '- The user has switched the memory off: nothing is remembered and nothing can be saved until they switch it on again.',
  pad: 'This note comes from the app, not from the user: the user\'s notepad, as it stands now.',
  padEmpty: '- The notepad is empty.',
+ // Under a list of notes or routines: their ids are the tools' own.
+ ids: 'The ids in brackets are for the tools alone: the user never sees them, so never write them to the user.',
  routines: 'This note comes from the app, not from the user: the routines of this chat, as they stand now.',
  routinesNone: '- This chat has no routines now.',
  peers: 'This note comes from the app, not from the user: who else is at work in this folder right now.',
@@ -215,8 +219,9 @@ const ASK = {
 // What the agent's show_pictures tool answers. At most `most` pictures in one call.
 const PICTURES = {
  most: 8,
- none: 'Error: show_pictures needs pictures: one to eight, each with a caption, and a ref, a part of the screen (x, y, width, height), a url or a path; with none of them the whole screen of the browser is shown.',
+ none: 'Error: show_pictures needs pictures: one to eight, each with a caption, and a ref, a part of the screen (x, y, width, height), photos, a url or a path; with none of them the whole screen of the browser is shown.',
  noBrowser: 'there is no page open in the built-in browser',
+ noPhotos: 'this page has no photos of its own to show: pass the ref of a picture or of a card, or a part of the screen',
  done: 'They are in your answer now, under what you have written so far: go on with the work. Do not show them again and do not write their addresses.',
 };
 
@@ -1363,10 +1368,15 @@ class Chat {
   conv.ask?.settle(TOOL_NOTES.cancelled);
  }
 
+ // The steps that wait for the user's OK in a chat: its agent's, and its helpers' while the agent itself is not at work.
+ pending(conv) {
+  return [...(conv?.turn?.approvals || []), ...(conv?.helperApprovals || [])];
+ }
+
  onModeChange(conv = this.active) {
   if (!conv) return;
   const mode = this.modeOf(conv);
-  for (const pending of conv.turn?.approvals || []) {
+  for (const pending of this.pending(conv)) {
    if (!AgentTools.needsApproval(pending.name, pending.args, { mode, cwd: pending.cwd, attached: this.attachedFiles(conv), apart: pending.apart, panel: pending.panel })) pending.card.settle('allow');
   }
  }
@@ -1567,6 +1577,8 @@ class Chat {
   turn.queue.push({ prompt, bubble });
   QueuedRing.put(bubble, { edit: () => this.withdraw(conv, bubble, true), remove: () => this.withdraw(conv, bubble) });
   this.dismissGhost(turn.part.view);
+  // The ghost waits under the message now, and still says what the agent does: the message is read once that is done.
+  if (turn.deed && !turn.writing) this.say(turn, turn.next, turn.deed);
   for (const pending of turn.approvals) pending.card.settle(TOOL_NOTES.message);
   conv.ask?.settle(ASK.message);
   turn.release?.('message');
@@ -1709,12 +1721,12 @@ class Chat {
   if (browser && browser !== before) out.push({ role: 'user', content: browser });
   // The user's notepad, the same way: an empty one gets no note, unless an earlier note says it held something.
   if (conv.pad) {
-   const lines = this.padLines(conv), had = told(TOOL_NOTES.pad), pad = lines || had ? `${TOOL_NOTES.pad}\n${lines || TOOL_NOTES.padEmpty}` : '';
+   const lines = this.padLines(conv), had = told(TOOL_NOTES.pad), pad = lines || had ? `${TOOL_NOTES.pad}\n${lines ? `${lines}\n${TOOL_NOTES.ids}` : TOOL_NOTES.padEmpty}` : '';
    if (pad && pad !== had) out.push({ role: 'user', content: pad });
   }
   // The chat's routines, the same way: none gets no note, unless an earlier note named some.
   if (this.routinable(conv)) {
-   const lines = Routines.lines(conv.id), had = told(TOOL_NOTES.routines), note = lines || had ? `${TOOL_NOTES.routines}\n${lines || TOOL_NOTES.routinesNone}` : '';
+   const lines = Routines.lines(conv.id), had = told(TOOL_NOTES.routines), note = lines || had ? `${TOOL_NOTES.routines}\n${lines ? `${lines}\n${TOOL_NOTES.ids}` : TOOL_NOTES.routinesNone}` : '';
    if (note && note !== had) out.push({ role: 'user', content: note });
   }
   // What is remembered of the user from all chats, the same way; switched off, a chat that was told of it is told so.
@@ -1834,6 +1846,9 @@ class Chat {
     // inert unless the profile (or the chat) names a safety net.
     fallbacks: this.fallbackConfigs(conv, turn.config),
     onFallback: moved => this.fellBack(conv, turn, view, moved),
+    // The model thinks before it acts: said beside the ghost, where the last step's words would stay otherwise, with
+    // what it thinks about (agent-line.js).
+    onReasoning: (delta, stream) => this.think(turn, view, stream.reasoning),
     onContent: (delta, stream) => {
      if (!stream.content.trim()) return;
      turn.text = true;
@@ -1862,6 +1877,10 @@ class Chat {
    throw error;
   } finally {
    turn.writing = false;
+   // Its thinking is over: a thought still waiting its turn is not shown any more.
+   clearTimeout(turn.thoughtTimer);
+   turn.thoughtTimer = 0;
+   turn.thinkingNext = null;
   }
   // Some compatible services deliver text in the terminal packet only. Keep that text visible too, including
   // native figures before a tool call; streaming deltas remain the normal path.
@@ -1972,9 +1991,8 @@ class Chat {
   }
   if (name === 'skill') return this.useSkill(conv, turn, view, args);
   if (name === 'show_pictures') return this.usePictures(conv, turn, view, args, { cwd, apart });
-  this.showGhost(turn.next || view);
   // What the step does, in the line beside the ghost; the next step's words take its place (agent-line.js).
-  AgentLine.show((turn.next || view).status, AgentLine.deed(name, args, cwd, apart));
+  this.say(turn, view, AgentLine.deed(name, args, cwd, apart));
   const panel = name.startsWith('browser_') ? browserPanel : null;
   // While the user has the browser the agent waits for it: the note to answer with if the wait ended some other way
   // than by Hand back, '' once the browser is the agent's again.
@@ -2038,6 +2056,16 @@ class Chat {
   for (const [k, item] of items.entries()) {
    if (turn.controller.signal.aborted) return TOOL_NOTES.cancelled;
    const caption = String(item.caption || '').replace(/\s+/g, ' ').trim();
+   // The main photos of the page open in the browser, several at once.
+   if (item.photos && !item.ref && !item.url && !item.path) {
+    let got;
+    try { got = await this.browserPhotos(conv, turn, item.photos, { cwd, apart }); } catch (error) { got = { error: error.message }; }
+    const list = (got?.pictures || []).filter(one => one?.url).slice(0, Math.max(0, PICTURES.most - shown.length));
+    if (!list.length) { told.push(`${k + 1}) not shown: ${got?.error || PICTURES.noPhotos}`); continue; }
+    for (const one of list) shown.push({ caption: caption || one.alt || one.title || '', url: one.url, page: /^https?:/i.test(one.page || '') ? one.page : '' });
+    told.push(`${k + 1}) ${list.length} ${list.length === 1 ? 'photo' : 'photos'} of the page shown: ${caption}`);
+    continue;
+   }
    let got;
    try {
     if (item.path) got = await bridge.file(conv.id, AgentTools.place(cwd, String(item.path)) || String(item.path), sealed);
@@ -2075,6 +2103,14 @@ class Chat {
   return panel.run('browser_picture', args, { id: turn.tool || `${conv.id}-${++this.tools}`, cwd, apart });
  }
 
+ // The main photos of the page open in the built-in browser (show_pictures with photos): how many the agent asked for.
+ async browserPhotos(conv, turn, count, { cwd, apart }) {
+  const panel = this.browserOf(conv);
+  if (!panel || !panel.current(apart)) return { error: PICTURES.noBrowser };
+  const args = { chat: conv.id, sealed: this.library.isProtected(conv.id), count: count === true ? 4 : Number(count) || 4 };
+  return panel.run('browser_photos', args, { id: turn.tool || `${conv.id}-${++this.tools}`, cwd, apart });
+ }
+
  // The agent asks the user (the ask_user tool): the composer of this chat turns into the card with the questions
  // (AskDeck), and the call waits there for as long as the user takes. Stop ends the wait, and so does a new message.
  async useAsk(conv, turn, view, args) {
@@ -2108,7 +2144,7 @@ class Chat {
   const host = this.main.querySelector('.composer');
   if (!host) return;
   const ask = this.active?.ask || null;
-  const cards = ask ? [] : [...(this.active?.turn?.approvals || [])].map(pending => pending.card);
+  const cards = ask ? [] : this.pending(this.active).map(pending => pending.card);
   if (ask || this.deck) {
    this.deck ||= new AskDeck(host);
    if (ask) this.deck.show(ask);
@@ -2126,6 +2162,8 @@ class Chat {
   this.dismissGhost(view);
   if (turn.next) this.dismissGhost(turn.next);
   const about = AgentTools.describe(request.name, request.args, request.cwd, request.apart, request.panel);
+  // A helper's step (helpers.js) says whose it is.
+  if (request.helper) about.title = I18n.t('helpers.asks', { name: request.helper, what: about.title });
   const rule = this.modeOf(conv) === 'ask' ? AgentTools.approvalRule?.(request.name, request.args, { cwd: request.cwd, apart: request.apart, panel: request.panel }) : null;
   const always = rule && this.library.allowPermission ? { hint: rule.hint, save: async () => {
    const saved = await this.library.allowPermission(conv.id, rule.key, turn.controller.signal);
@@ -2140,6 +2178,8 @@ class Chat {
   if (deck) (this.viewOf(conv) || this).syncAsk();
   this.onPlan?.(conv);
   this.viewOf(conv)?.followBottom();
+  // A step asked about by a helper that is then stopped needs no answer any more (helpers.js).
+  request.signal?.addEventListener('abort', () => card.settle('deny'), { once: true });
   const answer = await card.answer;
   turn.approvals.delete(pending);
   this.onPlan?.(conv);
@@ -2355,6 +2395,7 @@ class Chat {
     messages: [{ role: 'system', content: COMPACT.prompt }, { role: 'user', content: transcript(source) }],
     maxTokens: compactRoom(turn.config),
     signal: turn.controller.signal,
+    waited: true,
     onUsage: usage => { cost = usage; },
    });
   } catch (error) {
@@ -3108,7 +3149,7 @@ class Chat {
  async judgeDocs(conv, turn, docs) {
   const request = this.userTexts(conv).slice(-3).join('\n\n');
   if (!request.trim() || turn.controller.signal.aborted) return null;
-  const answer = await Providers.complete(turn.config, { messages: PlanProof.judgeMessages(request, docs), signal: turn.controller.signal, maxTokens: PlanProof.JUDGE.answer });
+  const answer = await Providers.complete(turn.config, { messages: PlanProof.judgeMessages(request, docs), signal: turn.controller.signal, maxTokens: PlanProof.JUDGE.answer, waited: true });
   return PlanProof.verdict(answer);
  }
 
@@ -3603,6 +3644,44 @@ class Chat {
   }
  }
 
+ // What the agent does now, in the line beside its ghost: under the reply, or under the user's message that waits for
+ // it. Kept with the turn, so the line goes along when the ghost moves under a message the user sends meanwhile.
+ say(turn, view, words) {
+  const place = turn.next || view;
+  this.showGhost(place);
+  if (!words) return;
+  turn.deed = words;
+  AgentLine.show(place.status, words);
+ }
+
+ // What the model thinks about, from its thinking so far (agent-line.js), in the line beside the ghost where a step's
+ // words stand: a new thought rolls in at a calm pace, at most one every THINK ms, so a model that thinks aloud does not
+ // make the line flicker; the latest one waits its turn. Until there is a thought to tell, the line stays as it is.
+ think(turn, view, text) {
+  if (turn.writing || turn.controller.signal.aborted) return;
+  const about = AgentLine.thought(text);
+  if (!about) return;
+  const shown = turn.deed?.thought ? turn.deed.verb : null;
+  if (shown === about) return;
+  const words = { verb: about, what: '', thought: true };
+  const wait = shown === null ? 0 : (turn.thoughtAt || 0) + THINK - Date.now();
+  turn.thinkingNext = words;
+  if (wait > 0) {
+   turn.thoughtTimer ||= setTimeout(() => {
+    turn.thoughtTimer = 0;
+    const next = turn.thinkingNext;
+    if (!next || turn.writing || !turn.deed?.thought) return;
+    turn.thinkingNext = null;
+    turn.thoughtAt = Date.now();
+    this.say(turn, view, next);
+   }, wait);
+   return;
+  }
+  turn.thoughtAt = Date.now();
+  this.say(turn, view, turn.thinkingNext);
+  turn.thinkingNext = null;
+ }
+
  showGhost(view) {
   const current = view.status;
   // The ghost stands under the reply's words and over a change to a file still shown at its end (agent-line.js).
@@ -4009,6 +4088,8 @@ class SideChat extends Chat {
 }
 
 Chat.splitQuotes = splitQuotes;
+// What the agent's helpers (helpers.js) run on: the same desk, notes and steps as a chat's own agent.
+Chat.internals = { Desk, TOOL_NOTES, UNDONE, assistantStep, imageStep, estimate, spend, sharedKinds, CONTEXT, COMPACT, compactRoom };
 window.Chat = Chat;
 window.SideChat = SideChat;
 })();
