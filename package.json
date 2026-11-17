@@ -11,7 +11,7 @@
     "test:effort-ui": "electron tests/chat-effort-ui.cjs",
     "test:effort-errors-ui": "electron tests/openai-effort-errors-ui.cjs",
     "test:fast-ui": "electron tests/model-fast-ui.cjs",
-    "test:picker": "electron tests/model-picker.cjs",
+    "test:picker": "electron tests/model-picker.cjs && electron tests/model-stage-close.cjs",
     "test:visuals-ui": "electron tests/native-visuals-ui.cjs",
     "test:photos-ui": "electron tests/composer-photo-preview-ui.cjs",
     "test:end-ui": "electron tests/agent-end-button-ui.cjs",

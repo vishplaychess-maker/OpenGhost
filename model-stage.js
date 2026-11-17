@@ -581,6 +581,8 @@ class ModelStage {
  }
 
  open(keyboard = false) {
+  // A close suspended with the window (occluded, minimized) is finished before another opens.
+  if (this.state === 'closing') this.finish();
   if (this.state !== 'closed' || this.chat.busy) return;
   // With no provider connected there is no model to pick: the way to one is through the settings.
   if (!this.settings.models.length) { this.settings.open(I18n.t('settings.key.needed')); return; }
@@ -931,6 +933,10 @@ class ModelStage {
   // Going away it takes no more presses: the name flies home over a page that is the user's again, and a press on the
   // effort, the field or the list was lost on the veil for the second the flight takes.
   this.root.style.pointerEvents = 'none';
+  // Chromium suspends animations for an occluded window: a close that cannot run is finished by its fallback, so a
+  // visible picker is never left deaf to every press. The longest close animation is 600 ms.
+  clearTimeout(this.closing);
+  this.closing = setTimeout(() => { if (this.state === 'closing') this.finish(); }, 1200);
   this.button.removeAttribute('expanded');
   document.documentElement.classList.remove('is-staging');
   if (reducedMotion()) { this.finish(); return; }
@@ -971,6 +977,7 @@ class ModelStage {
 
  finish() {
   if (this.state !== 'closing') return;
+  clearTimeout(this.closing);
   this.state = 'closed';
   this.root.style.pointerEvents = '';
   document.documentElement.classList.remove('is-staging');
